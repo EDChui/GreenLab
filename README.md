@@ -10,3 +10,13 @@ Please make sure you have the following software installed on your system.
 - Docker-compose
 - Python
 - [EnergiBridge](https://github.com/tdurieux/EnergiBridge)
+
+# Installation
+
+## Orchestration Machine
+
+```sh
+git clone --recursive https://github.com/EDChui/GreenLab.git
+./setup_orc.sh
+python experiment-runner/experiment-runner orc/RunnerConfig.py
+```
