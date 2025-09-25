@@ -13,6 +13,7 @@ from pathlib import Path
 from os import getenv
 from os.path import dirname, realpath
 from dotenv import load_dotenv
+import pandas as pd
 
 # Add the current directory to Python path to allow local imports
 import sys
@@ -26,6 +27,44 @@ from ExternalMachineAPI import ExternalMachineAPI
 load_dotenv()
 
 DEBUG_MODE = getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")
+CPU_COUNT = 32
+RAPL_OVERFLOW_VALUE = 262143.328850
+
+def parse_energibridge_output(file_path):
+    """
+    Parses the energibridge CSV output file to compute average values for specified metrics.
+    This code is adapted from: https://github.com/S2-group/python-compilers-rep-pkg
+    """
+    # Define target columns
+    target_columns = [
+        'TOTAL_MEMORY', 'TOTAL_SWAP', 'USED_MEMORY', 'USED_SWAP'] + [f'CPU_USAGE_{i}' for i in range(CPU_COUNT)] + [f'CPU_FREQUENCY_{i}' for i in range(CPU_COUNT)]
+
+    delta_target_columns = [
+        'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)', 'PP0_ENERGY (J)'
+    ]
+
+    # Read the file into a pandas DataFrame
+    df = pd.read_csv(file_path).apply(pd.to_numeric, errors='coerce')
+
+    # Calculate column-wise averages, ignoring NaN values and deltas from start of experiment to finish
+    averages = df[target_columns].mean().to_dict()
+    deltas = {}
+
+    # Account and mitigate potential RAPL overflow during metric collection
+    for column in delta_target_columns:
+        overflow_counter = 0
+        # Iterate and adjust values in the array
+        column_data = df[column].to_numpy()
+        for i in range(1, len(column_data)):
+            # See: https://arxiv.org/pdf/2401.15985
+            # See: https://arxiv.org/pdf/2410.05460
+            if column_data[i] < column_data[i - 1]:
+                output.console_log_WARNING(f"RAPL Overflow found:\nReading {i-1}: {column_data[i-1]}\nReading {i}: {column_data[i]}")
+                overflow_counter += 1
+                column_data[i:] += overflow_counter * RAPL_OVERFLOW_VALUE
+        deltas[column] = column_data[-1] - column_data[0]
+
+    return dict(averages.items() | deltas.items())
 
 class RunnerConfig:
     ROOT_DIR = Path(dirname(realpath(__file__)))
