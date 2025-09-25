@@ -7,17 +7,32 @@ from ConfigValidator.Config.Models.OperationType import OperationType
 from ExtendedTyping.Typing import SupportsStr
 from ProgressManager.Output.OutputProcedure import OutputProcedure as output
 
+import time
 from typing import Dict, List, Any, Optional
 from pathlib import Path
+from os import getenv
 from os.path import dirname, realpath
+from dotenv import load_dotenv
 
+# Add the current directory to Python path to allow local imports
+import sys
+from pathlib import Path
+config_dir = str(Path(__file__).parent.resolve())
+if config_dir not in sys.path:
+    sys.path.insert(0, config_dir)
+from ExternalMachineAPI import ExternalMachineAPI
+
+# Load environment variables from .env file
+load_dotenv()
+
+DEBUG_MODE = getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")
 
 class RunnerConfig:
     ROOT_DIR = Path(dirname(realpath(__file__)))
 
     # ================================ USER SPECIFIC CONFIG ================================
     """The name of the experiment."""
-    name:                       str             = "new_runner_experiment"
+    name:                       str             = "cpu_governor_on_social_network"
 
     """The path in which Experiment Runner will create a folder with the name `self.name`, in order to store the
     results from this experiment. (Path does not need to exist - it will be created if necessary.)
@@ -29,7 +44,7 @@ class RunnerConfig:
 
     """The time Experiment Runner will wait after a run completes.
     This can be essential to accommodate for cooldown periods on some systems."""
-    time_between_runs_in_ms:    int             = 1000
+    time_between_runs_in_ms:    int             = 90_000 if not DEBUG_MODE else 1_000  # milliseconds
 
     # Dynamic configurations can be one-time satisfied here before the program takes the config as-is
     # e.g. Setting some variable based on some criteria
@@ -48,8 +63,11 @@ class RunnerConfig:
             (RunnerEvents.AFTER_EXPERIMENT , self.after_experiment )
         ])
         self.run_table_model = None  # Initialized later
+        self.warmup_time                : int = 90 if not DEBUG_MODE else 5 # seconds
+        self.post_warmup_cooldown_time  : int = 30 if not DEBUG_MODE else 1 # seconds
 
         output.console_log("Custom config loaded")
+        output.console_log("Current environment: " + ("DEBUG" if DEBUG_MODE else "PRODUCTION"))
 
     def create_run_table_model(self) -> RunTableModel:
         """Create and return the run_table model here. A run_table is a List (rows) of tuples (columns),
@@ -69,41 +87,60 @@ class RunnerConfig:
     def before_experiment(self) -> None:
         """Perform any activity required before starting the experiment here
         Invoked only once during the lifetime of the program."""
-
-        output.console_log("Config.before_experiment() called!")
+        pass
 
     def before_run(self) -> None:
         """Perform any activity required before starting a run.
         No context is available here as the run is not yet active (BEFORE RUN)"""
-
-        output.console_log("Config.before_run() called!")
+        self.run_time = None
 
     def start_run(self, context: RunnerContext) -> None:
         """Perform any activity required for starting the run here.
         For example, starting the target system to measure.
         Activities after starting the run should also be performed here."""
+        
+        # TODO: SSH Set CPU governor
 
-        output.console_log("Config.start_run() called!")
+        # Warmup machine
+        output.console_log(f"Warming up machine for {self.warmup_time} seconds...")
+        # TODO: SSH start fibonacci
+        time.sleep(self.warmup_time)
+        # TODO: SSH stop fibonacci
+
+        # Cooldown a bit after warmup
+        time.sleep(self.post_warmup_cooldown_time)
+        output.console_log_OK("Warmup finished. Experiment is starting now!")
+
+        # TODO: Prepare machine for measurement
+        self.execution_command = "echo 'TODO: command here'"
+        output.console_log_OK('Run configuration is successful.')
 
     def start_measurement(self, context: RunnerContext) -> None:
         """Perform any activity required for starting measurements."""
-        output.console_log("Config.start_measurement() called!")
+        output.console_log(f'Running command through energibridge with:\n{self.execution_command}')
+        self.run_time = time.time()
+
+        # TODO: SSH execute remote command
+
+        output.console_log_OK('Run has successfuly started.')
+
+        # TODO: Read EnergiBridge output
+        
+        self.run_time = time.time() - self.run_time
+        output.console_log_OK(f'Run has completed in {self.run_time:.2f} seconds.')
 
     def interact(self, context: RunnerContext) -> None:
         """Perform any interaction with the running target system here, or block here until the target finishes."""
-
-        output.console_log("Config.interact() called!")
+        pass
 
     def stop_measurement(self, context: RunnerContext) -> None:
         """Perform any activity here required for stopping measurements."""
-
-        output.console_log("Config.stop_measurement called!")
+        pass
 
     def stop_run(self, context: RunnerContext) -> None:
         """Perform any activity here required for stopping the run.
         Activities after stopping the run should also be performed here."""
-
-        output.console_log("Config.stop_run() called!")
+        pass
 
     def populate_run_data(self, context: RunnerContext) -> Optional[Dict[str, SupportsStr]]:
         """Parse and process any measurement data here.
@@ -116,8 +153,8 @@ class RunnerConfig:
     def after_experiment(self) -> None:
         """Perform any activity required after stopping the experiment here
         Invoked only once during the lifetime of the program."""
-
-        output.console_log("Config.after_experiment() called!")
+        # TODO: Cleanup resources
+        pass
 
     # ================================ DO NOT ALTER BELOW THIS LINE ================================
     experiment_path:            Path             = None
