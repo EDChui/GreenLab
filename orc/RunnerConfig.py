@@ -63,8 +63,12 @@ class RunnerConfig:
             (RunnerEvents.AFTER_EXPERIMENT , self.after_experiment )
         ])
         self.run_table_model = None  # Initialized later
-        self.warmup_time                : int = 90 if not DEBUG_MODE else 5 # seconds
-        self.post_warmup_cooldown_time  : int = 30 if not DEBUG_MODE else 1 # seconds
+
+        self.testbed_project_directory = "~/GreenLab/testbed/"
+
+        self.energibridge_metric_capturing_interval : int = 200                         # milliseconds
+        self.warmup_time                            : int = 90 if not DEBUG_MODE else 5 # seconds
+        self.post_warmup_cooldown_time              : int = 30 if not DEBUG_MODE else 1 # seconds
 
         output.console_log("Custom config loaded")
         output.console_log("Current environment: " + ("DEBUG" if DEBUG_MODE else "PRODUCTION"))
@@ -72,15 +76,14 @@ class RunnerConfig:
     def create_run_table_model(self) -> RunTableModel:
         """Create and return the run_table model here. A run_table is a List (rows) of tuples (columns),
         representing each run performed"""
-        factor1 = FactorModel("example_factor1", ['example_treatment1', 'example_treatment2', 'example_treatment3'])
-        factor2 = FactorModel("example_factor2", [True, False])
+        factor1 = FactorModel("cpu_governor", ['performance', 'powersave', 'userspace', 'ondemand', 'conservative', 'schedutil'])
+        factor2 = FactorModel("load_type", ['A'])   # TODO: Use actual and meaningful name load types
+        factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
         self.run_table_model = RunTableModel(
-            factors=[factor1, factor2],
-            exclude_combinations=[
-                {factor1: ['example_treatment1']},                   # all runs having treatment "example_treatment1" will be excluded
-                {factor1: ['example_treatment2'], factor2: [True]},  # all runs having the combination ("example_treatment2", True) will be excluded
-            ],
-            data_columns=['avg_cpu', 'avg_mem']
+            factors=[factor1, factor2, factor3],
+            repetitions=5 if not DEBUG_MODE else 1,
+            shuffle=True if not DEBUG_MODE else False,
+            data_columns=['avg_cpu', 'avg_mem']     # TODO: Data columns for measurement results
         )
         return self.run_table_model
 
@@ -98,31 +101,42 @@ class RunnerConfig:
         """Perform any activity required for starting the run here.
         For example, starting the target system to measure.
         Activities after starting the run should also be performed here."""
-        
-        # TODO: SSH Set CPU governor
+        ssh = ExternalMachineAPI()
 
-        # Warmup machine
+        # === SSH Set CPU governor ===
+        cpu_governor = context.execute_run['cpu_governor']
+        ssh.execute_remote_command(f"sudo set-governor.sh {cpu_governor}")
+
+        # === Warmup machine ===
         output.console_log(f"Warming up machine for {self.warmup_time} seconds...")
-        # TODO: SSH start fibonacci
+        # SSH start warmup task
+        ssh.execute_remote_command(f"python3 {self.testbed_project_directory}/warmup.py 1000 & pid=$!; echo $pid")
+        warmup_pid = ssh.stdout.readline().strip()
         time.sleep(self.warmup_time)
-        # TODO: SSH stop fibonacci
-
+        # SSH stop warmup task
+        ssh.execute_remote_command(f"kill {warmup_pid}")
         # Cooldown a bit after warmup
         time.sleep(self.post_warmup_cooldown_time)
+        del ssh
         output.console_log_OK("Warmup finished. Experiment is starting now!")
 
-        # TODO: Prepare machine for measurement
-        self.execution_command = "echo 'TODO: command here'"
+        # Prepare machine for measurement
+        # TODO: Which process shall energibridge attach to?
+        self.external_run_dir = f'{self.testbed_project_directory}/experiments/'
+        energibrige_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/energibridge.csv --command-output {self.external_run_dir}/output.txt"
+        subject_command = f"sleep 60"  # TODO: Replace with actual subject command
+        self.execution_command = f"{energibrige_command} {subject_command}"
         output.console_log_OK('Run configuration is successful.')
 
     def start_measurement(self, context: RunnerContext) -> None:
         """Perform any activity required for starting measurements."""
+        ssh = ExternalMachineAPI()
         output.console_log(f'Running command through energibridge with:\n{self.execution_command}')
         self.run_time = time.time()
 
-        # TODO: SSH execute remote command
-
-        output.console_log_OK('Run has successfuly started.')
+        # SSH execute measurement command
+        ssh.execute_remote_command(self.execution_command)
+        output.console_log_OK('Run has successfully started.')
 
         # TODO: Read EnergiBridge output
         

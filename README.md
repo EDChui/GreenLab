@@ -13,10 +13,25 @@ Please make sure you have the following software installed on your system.
 
 # Installation
 
+## Testbed Machine
+
+```sh
+git clone --recursive https://github.com/EDChui/GreenLab.git
+./setup_testbed.sh
+```
+
 ## Orchestration Machine
 
 ```sh
 git clone --recursive https://github.com/EDChui/GreenLab.git
 ./setup_orc.sh
 python experiment-runner/experiment-runner orc/RunnerConfig.py
+```
+
+# Teardown
+
+## Testbed Machine
+
+```sh
+./teardown_testbed.sh
 ```
