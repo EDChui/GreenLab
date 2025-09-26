@@ -30,40 +30,58 @@ DEBUG_MODE = getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")
 CPU_COUNT = 32
 RAPL_OVERFLOW_VALUE = 262143.328850 # TODO: Pending verification
 
-def parse_energibridge_output(file_path):
-    """
-    Parses the energibridge CSV output file to compute average values for specified metrics.
-    This code is adapted from: https://github.com/S2-group/python-compilers-rep-pkg
-    """
-    # Define target columns
-    target_columns = [
-        'TOTAL_MEMORY', 'TOTAL_SWAP', 'USED_MEMORY', 'USED_SWAP'] + [f'CPU_USAGE_{i}' for i in range(CPU_COUNT)] + [f'CPU_FREQUENCY_{i}' for i in range(CPU_COUNT)]
+class OutputParser:
+    def parse_energibridge_output(file_path):
+        """
+        Parses the energibridge CSV output file to compute average values for specified metrics.
+        This code is adapted from: https://github.com/S2-group/python-compilers-rep-pkg
+        """
+        # Define target columns
+        target_columns = [
+            'TOTAL_MEMORY', 'TOTAL_SWAP', 'USED_MEMORY', 'USED_SWAP'] + [f'CPU_USAGE_{i}' for i in range(CPU_COUNT)] + [f'CPU_FREQUENCY_{i}' for i in range(CPU_COUNT)]
 
-    delta_target_columns = [
-        'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)', 'PP0_ENERGY (J)'
-    ]
+        delta_target_columns = [
+            'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)', 'PP0_ENERGY (J)'
+        ]
 
-    # Read the file into a pandas DataFrame
-    df = pd.read_csv(file_path).apply(pd.to_numeric, errors='coerce')
+        # Read the file into a pandas DataFrame
+        df = pd.read_csv(file_path).apply(pd.to_numeric, errors='coerce')
 
-    # Calculate column-wise averages, ignoring NaN values and deltas from start of experiment to finish
-    averages = df[target_columns].mean().to_dict()
-    deltas = {}
+        # Calculate column-wise averages, ignoring NaN values and deltas from start of experiment to finish
+        averages = df[target_columns].mean().to_dict()
+        deltas = {}
 
-    # Account and mitigate potential RAPL overflow during metric collection
-    for column in delta_target_columns:
-        overflow_counter = 0
-        # Iterate and adjust values in the array
-        column_data = df[column].to_numpy()
-        for i in range(1, len(column_data)):
-            # See: https://arxiv.org/pdf/2401.15985 and https://arxiv.org/pdf/2410.05460
-            if column_data[i] < column_data[i - 1]:
-                output.console_log_WARNING(f"RAPL Overflow found:\nReading {i-1}: {column_data[i-1]}\nReading {i}: {column_data[i]}")
-                overflow_counter += 1
-                column_data[i:] += overflow_counter * RAPL_OVERFLOW_VALUE
-        deltas[column] = column_data[-1] - column_data[0]
+        # Account and mitigate potential RAPL overflow during metric collection
+        for column in delta_target_columns:
+            overflow_counter = 0
+            # Iterate and adjust values in the array
+            column_data = df[column].to_numpy()
+            for i in range(1, len(column_data)):
+                # See: https://arxiv.org/pdf/2401.15985 and https://arxiv.org/pdf/2410.05460
+                if column_data[i] < column_data[i - 1]:
+                    output.console_log_WARNING(f"RAPL Overflow found:\nReading {i-1}: {column_data[i-1]}\nReading {i}: {column_data[i]}")
+                    overflow_counter += 1
+                    column_data[i:] += overflow_counter * RAPL_OVERFLOW_VALUE
+            deltas[column] = column_data[-1] - column_data[0]
 
-    return dict(averages.items() | deltas.items())
+        return dict(averages.items() | deltas.items())
+
+    def parse_docker_stats_output(file_path):
+        """
+        Parses the docker stats output file to compute average CPU and memory usage.
+        """
+        df = pd.read_csv(file_path, names=['Container', 'CPU%', 'MemUsage'])
+        
+        # Clean and convert CPU% to float
+        avg_cpu = df['CPU%'].str.rstrip('%').astype(float).mean()
+        
+        # Clean and convert MemUsage to float (in MiB)
+        avg_mem = df["MemUsage"].str.split('/').str[0].str.rstrip('MiB').astype(float).mean()
+        
+        return {
+            'avg_cpu': avg_cpu,
+            'avg_mem': avg_mem
+        }
 
 class RunnerConfig:
     ROOT_DIR = Path(dirname(realpath(__file__)))
@@ -161,10 +179,13 @@ class RunnerConfig:
         # Prepare commands for measurement
         self.external_run_dir = f'{self.testbed_project_directory}/experiments/'
         # TODO: Pending response from TA. Which process energibridge shall attach to?
-        self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/energibridge.csv --command-output {self.external_run_dir}/output.txt sleep 60"
+        self.energibridge_csv_filename = "energibridge.csv"
+        self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep 60"
         # TODO: Pending response from TA. Container-level energy measurement tools
 
         # TODO: Docker stats command for collecting container-level CPU and memory usage
+        self.docker_stats_csv_filename = "docker_stats.csv"
+        self.docker_stats_command = f"docker stats --no-stream --format \"{{{{.Container}}}},{{{{.CPUPerc}}}},{{{{.MemUsage}}}}\" > {self.external_run_dir}/{self.docker_stats_csv_filename}"
         output.console_log_OK('Run configuration is successful.')
 
     def start_measurement(self, context: RunnerContext) -> None:
@@ -180,6 +201,7 @@ class RunnerConfig:
 
         # TODO: SSH execute measurement commands
         ssh.execute_remote_command(self.energibridge_command)
+        ssh.execute_remote_command(self.docker_stats_command)
         output.console_log_OK('Run has successfully started.')
         
         # TODO: (Optional) Read EnergiBridge summary output
@@ -205,15 +227,40 @@ class RunnerConfig:
         You can also store the raw measurement data under `context.run_dir`
         Returns a dictionary with keys `self.run_table_model.data_columns` and their values populated"""
 
+        ssh = ExternalMachineAPI()
         # TODO: Copy output files from remote to local
+        remote_energibridge_csv = f"{self.external_run_dir}/{self.energibridge_csv_filename}"
+        remote_docker_stats_csv = f"{self.external_run_dir}/{self.docker_stats_csv_filename}"
+        local_energibridge_csv = context.run_dir / self.energibridge_csv_filename
+        local_docker_stats_csv = context.run_dir / self.docker_stats_csv_filename
+        
+        ssh.copy_remote_to_local(remote_energibridge_csv, str(local_energibridge_csv))
+        output.console_log_OK(f"Copied {remote_energibridge_csv} to {local_energibridge_csv}")
+        ssh.copy_remote_to_local(remote_docker_stats_csv, str(local_docker_stats_csv))
+        output.console_log_OK(f"Copied {remote_docker_stats_csv} to {local_docker_stats_csv}")
+        
         # TODO: Parse the output to populate run data
-        return None
+        energibridge_data = OutputParser.parse_energibridge_output(local_energibridge_csv)
+        docker_stats_data = OutputParser.parse_docker_stats_output(local_docker_stats_csv)
+
+        return {**energibridge_data, **docker_stats_data}
 
     def after_experiment(self) -> None:
         """Perform any activity required after stopping the experiment here
         Invoked only once during the lifetime of the program."""
+        ssh = ExternalMachineAPI()
+        
         # TODO: Cleanup resources
+        output.console_log("Cleaning up resources...")
+        ssh.execute_remote_command("pkill -f warmup.py") # TODO
+        output.console_log_OK("Resources cleaned up.")
+
         # TODO: Remove measurements files from remote machine
+        output.console_log("Removing measurement files from remote machine...")
+        ssh.execute_remote_command(f"rm -f {self.external_run_dir}/{self.energibridge_csv_filename}")
+        ssh.execute_remote_command(f"rm -f {self.external_run_dir}/{self.docker_stats_csv_filename}")
+        output.console_log_OK("Measurement files removed from remote machine.")
+
         pass
 
     # ================================ DO NOT ALTER BELOW THIS LINE ================================
