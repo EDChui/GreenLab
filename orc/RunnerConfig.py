@@ -28,7 +28,7 @@ load_dotenv()
 
 DEBUG_MODE = getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")
 CPU_COUNT = 32
-RAPL_OVERFLOW_VALUE = 262143.328850
+RAPL_OVERFLOW_VALUE = 262143.328850 # TODO: Pending verification
 
 def parse_energibridge_output(file_path):
     """
@@ -56,8 +56,7 @@ def parse_energibridge_output(file_path):
         # Iterate and adjust values in the array
         column_data = df[column].to_numpy()
         for i in range(1, len(column_data)):
-            # See: https://arxiv.org/pdf/2401.15985
-            # See: https://arxiv.org/pdf/2410.05460
+            # See: https://arxiv.org/pdf/2401.15985 and https://arxiv.org/pdf/2410.05460
             if column_data[i] < column_data[i - 1]:
                 output.console_log_WARNING(f"RAPL Overflow found:\nReading {i-1}: {column_data[i-1]}\nReading {i}: {column_data[i]}")
                 overflow_counter += 1
@@ -158,13 +157,14 @@ class RunnerConfig:
         time.sleep(self.post_warmup_cooldown_time)
         del ssh
         output.console_log_OK("Warmup finished. Experiment is starting now!")
-
-        # Prepare machine for measurement
-        # TODO: Which process shall energibridge attach to?
+        
+        # Prepare commands for measurement
         self.external_run_dir = f'{self.testbed_project_directory}/experiments/'
-        energibrige_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/energibridge.csv --command-output {self.external_run_dir}/output.txt"
-        subject_command = f"sleep 60"  # TODO: Replace with actual subject command
-        self.execution_command = f"{energibrige_command} {subject_command}"
+        # TODO: Pending response from TA. Which process energibridge shall attach to?
+        self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/energibridge.csv --command-output {self.external_run_dir}/output.txt sleep 60"
+        # TODO: Pending response from TA. Container-level energy measurement tools
+
+        # TODO: Docker stats command for collecting container-level CPU and memory usage
         output.console_log_OK('Run configuration is successful.')
 
     def start_measurement(self, context: RunnerContext) -> None:
@@ -173,11 +173,16 @@ class RunnerConfig:
         output.console_log(f'Running command through energibridge with:\n{self.execution_command}')
         self.run_time = time.time()
 
-        # SSH execute measurement command
-        ssh.execute_remote_command(self.execution_command)
-        output.console_log_OK('Run has successfully started.')
+        # TODO: Fire workload with Locust
+        load_type = context.execute_run['load_type']
+        load_level = context.execute_run['load_level']
+        # WorkloadGenerator.fire_load(load_type, load_level)
 
-        # TODO: Read EnergiBridge output
+        # TODO: SSH execute measurement commands
+        ssh.execute_remote_command(self.energibridge_command)
+        output.console_log_OK('Run has successfully started.')
+        
+        # TODO: (Optional) Read EnergiBridge summary output
         
         self.run_time = time.time() - self.run_time
         output.console_log_OK(f'Run has completed in {self.run_time:.2f} seconds.')
@@ -200,13 +205,15 @@ class RunnerConfig:
         You can also store the raw measurement data under `context.run_dir`
         Returns a dictionary with keys `self.run_table_model.data_columns` and their values populated"""
 
-        output.console_log("Config.populate_run_data() called!")
+        # TODO: Copy output files from remote to local
+        # TODO: Parse the output to populate run data
         return None
 
     def after_experiment(self) -> None:
         """Perform any activity required after stopping the experiment here
         Invoked only once during the lifetime of the program."""
         # TODO: Cleanup resources
+        # TODO: Remove measurements files from remote machine
         pass
 
     # ================================ DO NOT ALTER BELOW THIS LINE ================================

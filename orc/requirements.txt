@@ -2,3 +2,4 @@ dotenv==0.9.9
 paramiko==4.0.0
 scp==0.15.0
 pandas==2.3.2
+locust==2.41.1
