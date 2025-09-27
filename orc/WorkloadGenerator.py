@@ -1,20 +1,18 @@
-import os
-import json
-import uuid
-import random
-import logging
-from urllib.parse import urlparse
-from enum import Enum
 import io
+import logging
+import os
+import random
+import uuid
+from enum import Enum
 from pathlib import Path
-from urllib.parse import urlparse, quote_plus
+from urllib.parse import quote_plus, urlparse
 
-from locust import HttpUser, task, tag, between, events
+import gevent
+from dotenv import load_dotenv
+from locust import HttpUser, tag, task
 from locust.env import Environment
 from locust.stats import stats_history
-import gevent
-from pathlib import Path
-from dotenv import load_dotenv
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 env_path = Path(__file__).resolve().parent.parent / ".env.template"
