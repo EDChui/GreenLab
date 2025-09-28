@@ -134,7 +134,7 @@ class RunnerConfig:
         """Create and return the run_table model here. A run_table is a List (rows) of tuples (columns),
         representing each run performed"""
         factor1 = FactorModel("cpu_governor", ['performance', 'powersave', 'userspace', 'ondemand', 'conservative', 'schedutil'])
-        factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
+        factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])   # TODO: Use actual and meaningful name load types
         factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
         self.run_table_model = RunTableModel(
             factors=[factor1, factor2, factor3],
@@ -201,9 +201,9 @@ class RunnerConfig:
         ssh.execute_remote_command(self.energibridge_command)
         ssh.execute_remote_command(self.docker_stats_command)
 
-        # Fire workload with Locust
-        load_type = LoadType(context.execute_run['load_type'])
-        load_level = LoadLevel(context.execute_run['load_level'])
+        # TODO: Fire workload with Locust
+        load_type = LoadType[context.execute_run['load_type'].upper()]
+        load_level = LoadLevel[context.execute_run['load_level'].upper()]
         self.workload_result = workloadGenerator.fire_load(load_type, load_level)
 
         output.console_log_OK('Run has successfully started.')
@@ -213,7 +213,7 @@ class RunnerConfig:
         self.run_time = time.time() - self.run_time
         output.console_log_OK(f'Run has completed in {self.run_time:.2f} seconds.')
 
-        # Collect Locust performance metrics
+        # TODO: Collect Locust performance metrics
         locust_stats = self.workload_result
         self.client_metrics = {
             "throughput": locust_stats.num_requests / locust_stats.total_run_time,
