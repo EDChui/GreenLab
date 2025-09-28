@@ -252,7 +252,6 @@ class RunnerConfig:
         
         # TODO: Cleanup resources
         output.console_log("Cleaning up resources...")
-        ssh.execute_remote_command("pkill -f warmup.py") # TODO
         output.console_log_OK("Resources cleaned up.")
 
         # TODO: Remove measurements files from remote machine
