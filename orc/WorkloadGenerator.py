@@ -176,8 +176,10 @@ class WorkloadGenerator:
         # Summarize
         s = env.stats.total
         logging.info(
-            "Done. Requests=%s, Failures=%s, RPS=%.2f, p95=%d ms, p99=%d ms",
+            "Done. Requests=%s, Failures=%s, RPS=%.2f, p50=%d ms, p90=%d ms, p95=%d ms, p99=%d ms",
             s.num_requests, s.num_failures, s.total_rps,
+            s.get_response_time_percentile(0.5),
+            s.get_response_time_percentile(0.9),
             s.get_response_time_percentile(0.95),
             s.get_response_time_percentile(0.99),
         )

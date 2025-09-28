@@ -134,7 +134,7 @@ class RunnerConfig:
         """Create and return the run_table model here. A run_table is a List (rows) of tuples (columns),
         representing each run performed"""
         factor1 = FactorModel("cpu_governor", ['performance', 'powersave', 'userspace', 'ondemand', 'conservative', 'schedutil'])
-        factor2 = FactorModel("load_type", ['A'])   # TODO: Use actual and meaningful name load types
+        factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
         factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
         self.run_table_model = RunTableModel(
             factors=[factor1, factor2, factor3],
@@ -201,17 +201,27 @@ class RunnerConfig:
         ssh.execute_remote_command(self.energibridge_command)
         ssh.execute_remote_command(self.docker_stats_command)
 
-        # TODO: Fire workload with Locust
+        # Fire workload with Locust
         load_type = LoadType(context.execute_run['load_type'])
         load_level = LoadLevel(context.execute_run['load_level'])
         self.workload_result = workloadGenerator.fire_load(load_type, load_level)
 
         output.console_log_OK('Run has successfully started.')
-        
+
         # TODO: (Optional) Read EnergiBridge summary output
         
         self.run_time = time.time() - self.run_time
         output.console_log_OK(f'Run has completed in {self.run_time:.2f} seconds.')
+
+        # Collect Locust performance metrics
+        locust_stats = self.workload_result
+        self.client_metrics = {
+            "throughput": locust_stats.num_requests / locust_stats.total_run_time,
+            "latency_p50": locust_stats.get_response_time_percentile(0.50),
+            "latency_p90": locust_stats.get_response_time_percentile(0.90),
+            "latency_p95": locust_stats.get_response_time_percentile(0.95),
+            "latency_p99": locust_stats.get_response_time_percentile(0.99)
+        }
 
     def interact(self, context: RunnerContext) -> None:
         """Perform any interaction with the running target system here, or block here until the target finishes."""
@@ -247,7 +257,7 @@ class RunnerConfig:
         energibridge_data = OutputParser.parse_energibridge_output(local_energibridge_csv)
         docker_stats_data = OutputParser.parse_docker_stats_output(local_docker_stats_csv)
 
-        return {**energibridge_data, **docker_stats_data}
+        return {**energibridge_data, **docker_stats_data, **self.client_metrics}
 
     def after_experiment(self) -> None:
         """Perform any activity required after stopping the experiment here
