@@ -207,11 +207,21 @@ class RunnerConfig:
         self.workload_result = workloadGenerator.fire_load(load_type, load_level)
 
         output.console_log_OK('Run has successfully started.')
-        
+
         # TODO: (Optional) Read EnergiBridge summary output
         
         self.run_time = time.time() - self.run_time
         output.console_log_OK(f'Run has completed in {self.run_time:.2f} seconds.')
+
+        # TODO: Collect Locust performance metrics
+        locust_stats = self.workload_result
+        self.client_metrics = {
+            "throughput": locust_stats.num_requests / locust_stats.total_run_time,
+            "latency_p50": locust_stats.get_response_time_percentile(0.50),
+            "latency_p90": locust_stats.get_response_time_percentile(0.90),
+            "latency_p95": locust_stats.get_response_time_percentile(0.95),
+            "latency_p99": locust_stats.get_response_time_percentile(0.99)
+        }
 
     def interact(self, context: RunnerContext) -> None:
         """Perform any interaction with the running target system here, or block here until the target finishes."""
