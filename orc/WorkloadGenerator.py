@@ -15,8 +15,7 @@ from locust.stats import stats_history
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-env_path = Path(__file__).resolve().parent.parent / ".env.template"
-load_dotenv(env_path, override=True)
+load_dotenv()
 
 class LoadType(Enum):
     MEDIA = "media"
