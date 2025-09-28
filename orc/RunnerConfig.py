@@ -22,6 +22,7 @@ config_dir = str(Path(__file__).parent.resolve())
 if config_dir not in sys.path:
     sys.path.insert(0, config_dir)
 from ExternalMachineAPI import ExternalMachineAPI
+from WorkloadGenerator import WorkloadGenerator, LoadType, LoadLevel
 
 # Load environment variables from .env file
 load_dotenv()
@@ -152,6 +153,7 @@ class RunnerConfig:
         """Perform any activity required before starting a run.
         No context is available here as the run is not yet active (BEFORE RUN)"""
         self.run_time = None
+        self.workload_result = None
 
     def start_run(self, context: RunnerContext) -> None:
         """Perform any activity required for starting the run here.
@@ -191,17 +193,19 @@ class RunnerConfig:
     def start_measurement(self, context: RunnerContext) -> None:
         """Perform any activity required for starting measurements."""
         ssh = ExternalMachineAPI()
+        workloadGenerator = WorkloadGenerator()
         output.console_log(f'Running command through energibridge with:\n{self.execution_command}')
         self.run_time = time.time()
-
-        # TODO: Fire workload with Locust
-        load_type = context.execute_run['load_type']
-        load_level = context.execute_run['load_level']
-        # WorkloadGenerator.fire_load(load_type, load_level)
 
         # TODO: SSH execute measurement commands
         ssh.execute_remote_command(self.energibridge_command)
         ssh.execute_remote_command(self.docker_stats_command)
+
+        # TODO: Fire workload with Locust
+        load_type = LoadType(context.execute_run['load_type'])
+        load_level = LoadLevel(context.execute_run['load_level'])
+        self.workload_result = workloadGenerator.fire_load(load_type, load_level)
+
         output.console_log_OK('Run has successfully started.')
         
         # TODO: (Optional) Read EnergiBridge summary output
