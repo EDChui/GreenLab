@@ -257,7 +257,7 @@ class RunnerConfig:
         energibridge_data = OutputParser.parse_energibridge_output(local_energibridge_csv)
         docker_stats_data = OutputParser.parse_docker_stats_output(local_docker_stats_csv)
 
-        return {**energibridge_data, **docker_stats_data}
+        return {**energibridge_data, **docker_stats_data, **self.client_metrics}
 
     def after_experiment(self) -> None:
         """Perform any activity required after stopping the experiment here
