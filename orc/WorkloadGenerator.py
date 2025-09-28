@@ -18,9 +18,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 load_dotenv()
 
 class LoadType(Enum):
-    MEDIA = "media"
-    HOME_TIMELINE = "home_timeline"
-    COMPOSE_POST = "compose_post"
+    MEDIA_SERVICE = "media_service"           # CPU-intensive workload
+    HOME_TIMELINE_SERVICE = "home_timeline_service"  # Memory-intensive workload
+    COMPOSE_POST_SERVICE = "compose_post_service"    # Mixed workload
 
 class LoadLevel(Enum):
     # users, spawn_rate, duration(s)
@@ -148,11 +148,11 @@ class WorkloadGenerator:
         pass
 
     def fire_load(self, load_type: LoadType, load_level: LoadLevel):
-        if load_type == LoadType.MEDIA:
+        if load_type == LoadType.MEDIA_SERVICE:
             return self._run_locust(MediaUser, load_level)
-        elif load_type == LoadType.HOME_TIMELINE:
+        elif load_type == LoadType.HOME_TIMELINE_SERVICE:
             return self._run_locust(HomeTimelineUser, load_level)
-        elif load_type == LoadType.COMPOSE_POST:
+        elif load_type == LoadType.COMPOSE_POST_SERVICE:
             return self._run_locust(ComposePostUser, load_level)
         else:
             raise ValueError(f"Unsupported load type: {load_type}")
@@ -186,4 +186,4 @@ class WorkloadGenerator:
 
 if __name__ == "__main__":
     wg = WorkloadGenerator()
-    wg.fire_load(LoadType.MEDIA, LoadLevel.LOW)
+    wg.fire_load(LoadType.MEDIA_SERVICE, LoadLevel.LOW)

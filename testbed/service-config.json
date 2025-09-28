@@ -1,0 +1,109 @@
+{
+  "services": {
+    "media-service": {
+      "description": "CPU-intensive workload for image processing",
+      "port": 8081,
+      "resource_limits": {
+        "cpus": "2.0",
+        "memory": "1G"
+      },
+      "resource_reservations": {
+        "cpus": "1.0",
+        "memory": "512M"
+      },
+      "environment": {
+        "REDIS_ADDR": "redis:6379",
+        "MONGO_ADDR": "mongodb:27017"
+      },
+      "workload_characteristics": {
+        "type": "cpu_intensive",
+        "description": "Image processing and media handling operations"
+      }
+    },
+    "home-timeline-service": {
+      "description": "Memory-intensive workload for read-heavy operations",
+      "port": 8082,
+      "resource_limits": {
+        "cpus": "1.0",
+        "memory": "2G"
+      },
+      "resource_reservations": {
+        "cpus": "0.5",
+        "memory": "1G"
+      },
+      "environment": {
+        "REDIS_ADDR": "redis:6379",
+        "MONGO_ADDR": "mongodb:27017"
+      },
+      "workload_characteristics": {
+        "type": "memory_intensive",
+        "description": "Timeline data retrieval and caching operations"
+      }
+    },
+    "compose-post-service": {
+      "description": "Mixed workload combining CPU and memory operations",
+      "port": 8083,
+      "resource_limits": {
+        "cpus": "1.5",
+        "memory": "1.5G"
+      },
+      "resource_reservations": {
+        "cpus": "0.75",
+        "memory": "768M"
+      },
+      "environment": {
+        "REDIS_ADDR": "redis:6379",
+        "MONGO_ADDR": "mongodb:27017"
+      },
+      "workload_characteristics": {
+        "type": "mixed",
+        "description": "Post composition with both CPU and memory operations"
+      }
+    }
+  },
+  "supporting_services": {
+    "redis": {
+      "description": "In-memory data store for caching",
+      "port": 6379,
+      "resource_limits": {
+        "cpus": "0.5",
+        "memory": "512M"
+      }
+    },
+    "mongodb": {
+      "description": "Document database for persistent storage",
+      "port": 27017,
+      "resource_limits": {
+        "cpus": "0.5",
+        "memory": "512M"
+      }
+    }
+  },
+  "experiment_config": {
+    "load_levels": {
+      "low": {
+        "users": 50,
+        "spawn_rate": 50,
+        "duration": 30
+      },
+      "medium": {
+        "users": 200,
+        "spawn_rate": 200,
+        "duration": 30
+      },
+      "high": {
+        "users": 600,
+        "spawn_rate": 600,
+        "duration": 30
+      }
+    },
+    "cpu_governors": [
+      "performance",
+      "powersave", 
+      "userspace",
+      "ondemand",
+      "conservative",
+      "schedutil"
+    ]
+  }
+}

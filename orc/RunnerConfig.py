@@ -89,7 +89,7 @@ class RunnerConfig:
 
     # ================================ USER SPECIFIC CONFIG ================================
     """The name of the experiment."""
-    name:                       str             = "cpu_governor_on_social_network"
+    name:                       str             = "cpu_governor_on_deathstarbench_services"
 
     """The path in which Experiment Runner will create a folder with the name `self.name`, in order to store the
     results from this experiment. (Path does not need to exist - it will be created if necessary.)
@@ -134,13 +134,13 @@ class RunnerConfig:
         """Create and return the run_table model here. A run_table is a List (rows) of tuples (columns),
         representing each run performed"""
         factor1 = FactorModel("cpu_governor", ['performance', 'powersave', 'userspace', 'ondemand', 'conservative', 'schedutil'])
-        factor2 = FactorModel("load_type", ['A'])   # TODO: Use actual and meaningful name load types
+        factor2 = FactorModel("load_type", ['media_service', 'home_timeline_service', 'compose_post_service'])
         factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
         self.run_table_model = RunTableModel(
             factors=[factor1, factor2, factor3],
             repetitions=5 if not DEBUG_MODE else 1,
             shuffle=True if not DEBUG_MODE else False,
-            data_columns=['avg_cpu', 'avg_mem']     # TODO: Data columns for measurement results
+            data_columns=['avg_cpu', 'avg_mem', 'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)', 'PP0_ENERGY (J)']
         )
         return self.run_table_model
 
