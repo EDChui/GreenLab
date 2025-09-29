@@ -122,6 +122,7 @@ class RunnerConfig:
         self.run_table_model = None  # Initialized later
 
         self.testbed_project_directory = "~/GreenLab/testbed/"
+        self.external_run_dir = f'{self.testbed_project_directory}/experiments'
 
         self.energibridge_metric_capturing_interval : int = 200                         # milliseconds
         self.warmup_time                            : int = 90 if not DEBUG_MODE else 5 # seconds
@@ -188,7 +189,6 @@ class RunnerConfig:
         output.console_log_OK("Warmup finished. Experiment is starting now!")
         
         # Prepare commands for measurement
-        self.external_run_dir = f'{self.testbed_project_directory}/experiments'
         self.energibridge_csv_filename = "energibridge.csv"
         # Server-level energy measurement with EnergiBridge
         sleep_duration_seconds = 300 # Long enough for the whole workload generation to finish
