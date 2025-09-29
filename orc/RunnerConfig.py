@@ -133,9 +133,14 @@ class RunnerConfig:
     def create_run_table_model(self) -> RunTableModel:
         """Create and return the run_table model here. A run_table is a List (rows) of tuples (columns),
         representing each run performed"""
-        factor1 = FactorModel("cpu_governor", ['performance', 'powersave', 'userspace', 'ondemand', 'conservative', 'schedutil'])
-        factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
-        factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
+        if not DEBUG_MODE:
+            factor1 = FactorModel("cpu_governor", ['performance', 'powersave', 'userspace', 'ondemand', 'conservative', 'schedutil'])
+            factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
+            factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
+        else:
+            factor1 = FactorModel("cpu_governor", ['performance', 'powersave'])
+            factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
+            factor3 = FactorModel("load_level", ['low'])
         self.run_table_model = RunTableModel(
             factors=[factor1, factor2, factor3],
             repetitions=5 if not DEBUG_MODE else 1,
