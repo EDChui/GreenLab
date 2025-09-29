@@ -134,7 +134,7 @@ class RunnerConfig:
         """Create and return the run_table model here. A run_table is a List (rows) of tuples (columns),
         representing each run performed"""
         factor1 = FactorModel("cpu_governor", ['performance', 'powersave', 'userspace', 'ondemand', 'conservative', 'schedutil'])
-        factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])   # TODO: Use actual and meaningful name load types
+        factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
         factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
         self.run_table_model = RunTableModel(
             factors=[factor1, factor2, factor3],
@@ -161,11 +161,12 @@ class RunnerConfig:
         Activities after starting the run should also be performed here."""
         ssh = ExternalMachineAPI()
 
-        # === SSH Set CPU governor ===
+        # SSH Set CPU governor
         cpu_governor = context.execute_run['cpu_governor']
         ssh.execute_remote_command(f"sudo set-governor.sh {cpu_governor}")
+        output.console_log_OK(f"Set CPU governor to {cpu_governor}")
 
-        # === Warmup machine ===
+        # Warmup machine
         output.console_log(f"Warming up machine for {self.warmup_time} seconds...")
         # SSH start warmup task
         ssh.execute_remote_command(f"python3 {self.testbed_project_directory}/warmup.py 1000 & pid=$!; echo $pid")
@@ -180,8 +181,9 @@ class RunnerConfig:
         
         # Prepare commands for measurement
         self.external_run_dir = f'{self.testbed_project_directory}/experiments/'
+        # Server-level energy measurement with EnergiBridge
         self.energibridge_csv_filename = "energibridge.csv"
-        sleep_duration_seconds = 0 # TODO: Long enough for the whole workload generation to finish
+        sleep_duration_seconds = 300 # Long enough for the whole workload generation to finish
         self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
         # TODO: Pending response from TA. Container-level energy measurement tools
 
@@ -197,23 +199,27 @@ class RunnerConfig:
         output.console_log(f'Running command through energibridge with:\n{self.execution_command}')
         self.run_time = time.time()
 
-        # TODO: SSH execute measurement commands
-        ssh.execute_remote_command(self.energibridge_command)
+        # SSH execute measurement commands
+        ssh.execute_remote_command(f"{self.energibridge_command} & pid=$!; echo $pid")
+        energibridge_pid = ssh.stdout.readline().strip()
+        output.console_log_OK(f"EnergiBridge started with PID {energibridge_pid}")
         ssh.execute_remote_command(self.docker_stats_command)
 
-        # TODO: Fire workload with Locust
+        # Fire workload with Locust
         load_type = LoadType[context.execute_run['load_type'].upper()]
         load_level = LoadLevel[context.execute_run['load_level'].upper()]
         self.workload_result = workloadGenerator.fire_load(load_type, load_level)
 
         output.console_log_OK('Run has successfully started.')
 
-        # TODO: (Optional) Read EnergiBridge summary output
+        # Kill energibridge after workload is done
+        ssh.execute_remote_command(f"kill {energibridge_pid}")
+        output.console_log_OK("EnergiBridge stopped.")
         
         self.run_time = time.time() - self.run_time
         output.console_log_OK(f'Run has completed in {self.run_time:.2f} seconds.')
 
-        # TODO: Collect Locust performance metrics
+        # Collect Locust performance metrics
         locust_stats = self.workload_result
         self.client_metrics = {
             "throughput": locust_stats.num_requests / locust_stats.total_run_time,
