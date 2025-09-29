@@ -14,6 +14,9 @@ from os import getenv
 from os.path import dirname, realpath
 from dotenv import load_dotenv
 import pandas as pd
+import math
+import re
+import numpy as np
 
 # Add the current directory to Python path to allow local imports
 import sys
@@ -67,22 +70,100 @@ class OutputParser:
 
         return dict(averages.items() | deltas.items())
 
-    def parse_docker_stats_output(file_path):
+    @staticmethod
+    def _mem_to_bytes(mem_usage_str: str):
         """
-        Parses the docker stats output file to compute average CPU and memory usage.
+        Convert the 'used' part of docker's MemUsage to bytes.
+        Example: '824.3MiB / 2.00GiB' -> 824.3 * 1024**2
         """
-        df = pd.read_csv(file_path, names=['Container', 'CPU%', 'MemUsage'])
-        
-        # Clean and convert CPU% to float
-        avg_cpu = df['CPU%'].str.rstrip('%').astype(float).mean()
-        
-        # Clean and convert MemUsage to float (in MiB)
-        avg_mem = df["MemUsage"].str.split('/').str[0].str.rstrip('MiB').astype(float).mean()
-        
-        return {
-            'avg_cpu': avg_cpu,
-            'avg_mem': avg_mem
+        if not isinstance(mem_usage_str, str):
+            return math.nan
+        # Only the "used" side before the slash
+        used = mem_usage_str.split('/', 1)[0].strip()
+        m = re.match(r'^\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGT]?i?B)\s*$', used, re.IGNORECASE)
+        if not m:
+            parts = used.split()
+            if len(parts) != 2:
+                return math.nan
+            val_str, unit = parts[0].replace(',', '.'), parts[1]
+            try:
+                val = float(val_str)
+            except Exception:
+                return math.nan
+            unit = unit.upper()
+        else:
+            val = float(m.group(1))
+            unit = m.group(2).upper()
+
+        mult = {
+            'B': 1,
+            'KB': 1000,
+            'MB': 1000**2,
+            'GB': 1000**3,
+            'TB': 1000**4,
+            'KIB': 1024,
+            'MIB': 1024**2,
+            'GIB': 1024**3,
+            'TIB': 1024**4,
         }
+        return val * mult.get(unit, 1)
+
+    @staticmethod
+    def _cpu_to_float(cpu_str: str):
+        """Convert '5.23%' -> 5.23"""
+        if not isinstance(cpu_str, str):
+            return math.nan
+        s = cpu_str.strip().rstrip('%').replace(',', '.')
+        try:
+            return float(s)
+        except Exception:
+            return math.nan
+
+    @staticmethod
+    def _p95(series: pd.Series):
+        x = pd.to_numeric(series, errors='coerce').dropna()
+        return float(np.percentile(x, 95)) if not x.empty else math.nan
+
+    @staticmethod
+    def _nan_to_none(d: dict):
+        def convert(v):
+            try:
+                # handles numpy/pandas NaN
+                return None if (isinstance(v, float) and math.isnan(v)) else v
+            except Exception:
+                return v
+        return {k: convert(v) for k, v in d.items()}
+
+    @classmethod
+    def parse_docker_stats_output(cls, file_path: str):
+        """
+        Parse CSV with header: ts,Container,CPU%,MemUsage
+        """
+        df = pd.read_csv(file_path)
+
+        expected = {'ts', 'Container', 'CPU%', 'MemUsage'}
+        if not expected.issubset(df.columns):
+            raise ValueError(
+                f"Expected header {sorted(expected)} in {file_path}, found {list(df.columns)}"
+            )
+
+        # Parse numeric columns
+        df['cpu_pct']   = df['CPU%'].map(cls._cpu_to_float)
+        df['mem_bytes'] = df['MemUsage'].map(cls._mem_to_bytes)
+
+        # Aggregate per container
+        grp = df.groupby('Container', as_index=True)
+        result = {
+            "container_cpu_usage_mean":    grp['cpu_pct'].mean().to_dict(),
+            "container_cpu_usage_p95":     grp['cpu_pct'].apply(cls._p95).to_dict(),
+            "container_cpu_usage_max":     grp['cpu_pct'].max().to_dict(),
+            "container_cpu_usage_samples": grp['cpu_pct'].count().astype(int).to_dict(),
+            "container_mem_usage_mean":    grp['mem_bytes'].mean().to_dict(),
+            "container_mem_usage_p95":     grp['mem_bytes'].apply(cls._p95).to_dict(),
+            "container_mem_usage_max":     grp['mem_bytes'].max().to_dict(),
+            "container_mem_usage_samples": grp['mem_bytes'].count().astype(int).to_dict(),
+        }
+        return cls._nan_to_none(result)
 
 class RunnerConfig:
     ROOT_DIR = Path(dirname(realpath(__file__)))
@@ -123,6 +204,8 @@ class RunnerConfig:
 
         self.testbed_project_directory = "~/GreenLab/testbed"
         self.external_run_dir = f'{self.testbed_project_directory}/experiments'
+        self.energibridge_csv_filename = "energibridge.csv"
+        self.docker_stats_csv_filename = "docker_stats.csv"
 
         self.energibridge_metric_capturing_interval : int = 200                         # milliseconds
         self.warmup_time                            : int = 90 if not DEBUG_MODE else 5 # seconds
@@ -189,16 +272,23 @@ class RunnerConfig:
         output.console_log_OK("Warmup finished. Experiment is starting now!")
         
         # Prepare commands for measurement
-        self.energibridge_csv_filename = "energibridge.csv"
+
         # Server-level energy measurement with EnergiBridge
         sleep_duration_seconds = 300 # Long enough for the whole workload generation to finish
         # FIXME: @Raptor No energibridge csv is created on gl3 machine
         self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
         # TODO: Pending response from TA. Container-level energy measurement tools
 
-        # TODO: Docker stats command for collecting container-level CPU and memory usage
-        self.docker_stats_csv_filename = "docker_stats.csv"
-        self.docker_stats_command = f"docker stats --no-stream --format \"{{{{.Container}}}},{{{{.CPUPerc}}}},{{{{.MemUsage}}}}\" > {self.external_run_dir}/{self.docker_stats_csv_filename}"
+        # TODO: Commands for collecting container-level CPU and memory usage on host machine: samples per second
+        self.docker_stats_start = (
+            f"bash -lc 'DIR={self.external_run_dir}; FILE={self.docker_stats_csv_filename}; INT=1; "
+            f"mkdir -p \"$DIR\"; echo \"ts,Container,CPU%,MemUsage\" > \"$DIR/$FILE\"; "
+            f"( while :; do docker stats --no-stream --format \"{{{{.Container}}}},{{{{.CPUPerc}}}},{{{{.MemUsage}}}}\" "
+            f"| awk -v ts=\"$(date +%s)\" -F, '\\''{{print ts\",\"$0}}'\\'' >> \"$DIR/$FILE\"; "
+            f"sleep \"$INT\"; done ) & echo $! > \"$DIR/docker_stats.pid\"'")
+        self.docker_stats_stop = (
+            f"bash -lc 'DIR={self.external_run_dir}; "
+            f"[ -f \"$DIR/docker_stats.pid\" ] && kill -TERM \"$(cat \"$DIR/docker_stats.pid\")\" && rm -f \"$DIR/docker_stats.pid\" || true'")
         output.console_log_OK('Run configuration is successful.')
 
     def start_measurement(self, context: RunnerContext) -> None:
@@ -225,6 +315,10 @@ class RunnerConfig:
         # Kill energibridge after workload is done
         ssh.execute_remote_command(f"kill {energibridge_pid}")
         output.console_log_OK("EnergiBridge stopped.")
+
+        # Stop docker stats collection
+        ssh.execute_remote_command(self.docker_stats_stop)
+        output.console_log_OK("Docker stats collection stopped.")
         
         self.run_time = time.time() - self.run_time
         output.console_log_OK(f'Run has completed in {self.run_time:.2f} seconds.')
