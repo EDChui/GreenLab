@@ -68,10 +68,14 @@ class ExternalMachineAPI:
         return None
 
     def __del__(self):
-        self.stdin.close()
-        self.stdout.close()
-        self.stderr.close()
-        self.ssh.close()
+        if self.stdin:
+            self.stdin.close()
+        if self.stdout:
+            self.stdout.close()
+        if self.stderr:
+            self.stderr.close()
+        if self.ssh:
+            self.ssh.close()
 
 if __name__ == "__main__":
     ssh = ExternalMachineAPI()

@@ -187,9 +187,8 @@ class RunnerConfig:
         # Prepare commands for measurement
         self.external_run_dir = f'{self.testbed_project_directory}/experiments/'
         # Server-level energy measurement with EnergiBridge
-        self.energibridge_csv_filename = "energibridge.csv"
         sleep_duration_seconds = 300 # Long enough for the whole workload generation to finish
-        self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
+        self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/energibridge.csv --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
         # TODO: Pending response from TA. Container-level energy measurement tools
 
         # TODO: Docker stats command for collecting container-level CPU and memory usage
