@@ -7,11 +7,11 @@ cd DeathStarBench/socialNetwork
 
 # Start the social network application
 echo "Starting DeathStarBench Social Network application..."
-docker-compose up -d
+docker compose up -d
 
 # Verify services are running
 echo "Checking service status..."
-docker-compose ps
+docker compose ps
 docker ps --format "table {{.Names}}\t{{.Ports}}"
 
 echo "DeathStarBench Social Network setup complete!"
