@@ -152,7 +152,10 @@ class RunnerConfig:
     def before_experiment(self) -> None:
         """Perform any activity required before starting the experiment here
         Invoked only once during the lifetime of the program."""
-        pass
+        ssh = ExternalMachineAPI()
+        ssh.execute_remote_command(f"mkdir -p {self.external_run_dir}")
+        output.console_log_OK(f"Created experiment directory at {self.external_run_dir} on remote machine.")
+        del ssh
 
     def before_run(self) -> None:
         """Perform any activity required before starting a run.
@@ -185,10 +188,11 @@ class RunnerConfig:
         output.console_log_OK("Warmup finished. Experiment is starting now!")
         
         # Prepare commands for measurement
-        self.external_run_dir = f'{self.testbed_project_directory}/experiments/'
+        self.external_run_dir = f'{self.testbed_project_directory}/experiments'
+        self.energibridge_csv_filename = "energibridge.csv"
         # Server-level energy measurement with EnergiBridge
         sleep_duration_seconds = 300 # Long enough for the whole workload generation to finish
-        self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/energibridge.csv --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
+        self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
         # TODO: Pending response from TA. Container-level energy measurement tools
 
         # TODO: Docker stats command for collecting container-level CPU and memory usage
