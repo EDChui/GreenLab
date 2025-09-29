@@ -121,7 +121,7 @@ class RunnerConfig:
         ])
         self.run_table_model = None  # Initialized later
 
-        self.testbed_project_directory = "~/GreenLab/testbed/"
+        self.testbed_project_directory = "~/GreenLab/testbed"
         self.external_run_dir = f'{self.testbed_project_directory}/experiments'
 
         self.energibridge_metric_capturing_interval : int = 200                         # milliseconds
@@ -207,6 +207,7 @@ class RunnerConfig:
         self.run_time = time.time()
 
         # SSH execute measurement commands
+        output.console_log(f"EnergiBridge_command: {self.energibridge_command}")
         ssh.execute_remote_command(f"{self.energibridge_command} & pid=$!; echo $pid")
         energibridge_pid = ssh.stdout.readline().strip()
         output.console_log_OK(f"EnergiBridge started with PID {energibridge_pid}")
