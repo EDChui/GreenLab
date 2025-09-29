@@ -17,14 +17,18 @@ Please make sure you have the following software installed on your system.
 
 ```sh
 git clone --recursive https://github.com/EDChui/GreenLab.git
-./setup_testbed.sh
+cd GreenLab
+source ./setup_testbed.sh
 ```
 
 ## Orchestration Machine
 
 ```sh
 git clone --recursive https://github.com/EDChui/GreenLab.git
-./setup_orc.sh
+cd GreenLab
+source ./setup_orc.sh
+cp .env.example .env
+nano .env # Edit .env to set the correct parameters if necessary
 python experiment-runner/experiment-runner orc/RunnerConfig.py
 ```
 

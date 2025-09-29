@@ -196,7 +196,6 @@ class RunnerConfig:
         """Perform any activity required for starting measurements."""
         ssh = ExternalMachineAPI()
         workloadGenerator = WorkloadGenerator()
-        output.console_log(f'Running command through energibridge with:\n{self.execution_command}')
         self.run_time = time.time()
 
         # SSH execute measurement commands
@@ -204,10 +203,12 @@ class RunnerConfig:
         energibridge_pid = ssh.stdout.readline().strip()
         output.console_log_OK(f"EnergiBridge started with PID {energibridge_pid}")
         ssh.execute_remote_command(self.docker_stats_command)
+        output.console_log_OK("Docker stats collected.")
 
         # Fire workload with Locust
         load_type = LoadType[context.execute_run['load_type'].upper()]
         load_level = LoadLevel[context.execute_run['load_level'].upper()]
+        output.console_log(f"Firing workload: {load_type.name} at {load_level.name} level...")
         self.workload_result = workloadGenerator.fire_load(load_type, load_level)
 
         output.console_log_OK('Run has successfully started.')
