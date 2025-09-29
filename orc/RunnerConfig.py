@@ -223,7 +223,7 @@ class RunnerConfig:
         # Collect Locust performance metrics
         locust_stats = self.workload_result
         self.client_metrics = {
-            "throughput": locust_stats.num_requests / locust_stats.total_run_time,
+            "throughput": locust_stats.num_requests / locust_stats.total_response_time,
             "latency_p50": locust_stats.get_response_time_percentile(0.50),
             "latency_p90": locust_stats.get_response_time_percentile(0.90),
             "latency_p95": locust_stats.get_response_time_percentile(0.95),
