@@ -29,7 +29,7 @@ load_dotenv()
 
 DEBUG_MODE = getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")
 CPU_COUNT = 32
-RAPL_OVERFLOW_VALUE = 262143.328850 # TODO: Pending verification
+RAPL_OVERFLOW_VALUE = 262143.328850 # Found via `cat /sys/class/powercap/intel-rapl:0/max_energy_range_uj` in uJ
 
 class OutputParser:
     def parse_energibridge_output(file_path):
@@ -58,7 +58,7 @@ class OutputParser:
             # Iterate and adjust values in the array
             column_data = df[column].to_numpy()
             for i in range(1, len(column_data)):
-                # See: https://arxiv.org/pdf/2401.15985 and https://arxiv.org/pdf/2410.05460
+                # Motivation behind Section IV-B from https://arxiv.org/pdf/2401.15985
                 if column_data[i] < column_data[i - 1]:
                     output.console_log_WARNING(f"RAPL Overflow found:\nReading {i-1}: {column_data[i-1]}\nReading {i}: {column_data[i]}")
                     overflow_counter += 1
@@ -180,9 +180,9 @@ class RunnerConfig:
         
         # Prepare commands for measurement
         self.external_run_dir = f'{self.testbed_project_directory}/experiments/'
-        # TODO: Pending response from TA. Which process energibridge shall attach to?
         self.energibridge_csv_filename = "energibridge.csv"
-        self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep 60"
+        sleep_duration_seconds = 0 # TODO: Long enough for the whole workload generation to finish
+        self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
         # TODO: Pending response from TA. Container-level energy measurement tools
 
         # TODO: Docker stats command for collecting container-level CPU and memory usage
