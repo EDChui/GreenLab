@@ -192,6 +192,7 @@ class RunnerConfig:
         self.energibridge_csv_filename = "energibridge.csv"
         # Server-level energy measurement with EnergiBridge
         sleep_duration_seconds = 300 # Long enough for the whole workload generation to finish
+        # FIXME: @Raptor No energibridge csv is created on gl3 machine
         self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
         # TODO: Pending response from TA. Container-level energy measurement tools
 
@@ -207,7 +208,6 @@ class RunnerConfig:
         self.run_time = time.time()
 
         # SSH execute measurement commands
-        output.console_log(f"EnergiBridge_command: {self.energibridge_command}")
         ssh.execute_remote_command(f"{self.energibridge_command} & pid=$!; echo $pid")
         energibridge_pid = ssh.stdout.readline().strip()
         output.console_log_OK(f"EnergiBridge started with PID {energibridge_pid}")
@@ -286,6 +286,7 @@ class RunnerConfig:
 
         # TODO: Remove measurements files from remote machine
         output.console_log("Removing measurement files from remote machine...")
+        # FIXME: @Raptor `AttributeError: 'RunnerConfig' object has no attribute 'energibridge_csv_filename'`
         ssh.execute_remote_command(f"rm -f {self.external_run_dir}/{self.energibridge_csv_filename}")
         ssh.execute_remote_command(f"rm -f {self.external_run_dir}/{self.docker_stats_csv_filename}")
         output.console_log_OK("Measurement files removed from remote machine.")
