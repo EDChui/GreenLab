@@ -140,7 +140,7 @@ class RunnerConfig:
         else:
             factor1 = FactorModel("cpu_governor", ['performance', 'powersave'])
             factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
-            factor3 = FactorModel("load_level", ['low'])
+            factor3 = FactorModel("load_level", ['debug'])
         self.run_table_model = RunTableModel(
             factors=[factor1, factor2, factor3],
             repetitions=5 if not DEBUG_MODE else 1,
