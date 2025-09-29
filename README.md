@@ -14,15 +14,30 @@ Please make sure you have the following software installed on your system.
 # Installation
 
 ## Testbed Machine
+Please make sure you have the following software installed on the testbed machine for DeathStarBench social network application. (https://github.com/delimitrou/DeathStarBench/tree/master/socialNetwork)
 
+- Docker
+- Docker-compose
+- Python 3.5+ (with asyncio and aiohttp)
+- libssl-dev (apt-get install libssl-dev)
+- libz-dev (apt-get install libz-dev)
+- luarocks (apt-get install luarocks)
+- luasocket (luarocks install luasocket)
+
+Please make sure you have created and activated the virtual environment for installing the required python dependencies, and setting up the testbed machine.
 ```sh
+python3 -m venv venv
+source venv/bin/activate
+pip install asyncio aiohttp
 git clone --recursive https://github.com/EDChui/GreenLab.git
 ./setup_testbed.sh
 ```
 
 ## Orchestration Machine
-
+Please make sure you have created and activated the virtual environment for setting up the orchestration machine.
 ```sh
+python3 -m venv venv
+source venv/bin/activate
 git clone --recursive https://github.com/EDChui/GreenLab.git
 ./setup_orc.sh
 python experiment-runner/experiment-runner orc/RunnerConfig.py
