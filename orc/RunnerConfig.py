@@ -285,6 +285,7 @@ class RunnerConfig:
         sleep_duration_seconds = 300 # Long enough for the whole workload generation to finish
         # FIXME: @Raptor No energibridge csv is created on gl3 machine
         self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
+        output.console_log(f"EnergiBridge command: {self.energibridge_command}")
         # TODO: Pending response from TA. Container-level energy measurement tools
 
         # TODO: Commands for collecting container-level CPU and memory usage on host machine: samples per second
