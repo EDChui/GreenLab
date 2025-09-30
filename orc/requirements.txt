@@ -3,3 +3,4 @@ paramiko==4.0.0
 scp==0.15.0
 pandas==2.3.2
 locust==2.34.0
+numpy==1.26.4
