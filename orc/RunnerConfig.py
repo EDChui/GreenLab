@@ -124,20 +124,11 @@ class OutputParser:
         x = pd.to_numeric(series, errors='coerce').dropna()
         return float(np.percentile(x, 95)) if not x.empty else math.nan
 
-    @staticmethod
-    def _nan_to_none(d: dict):
-        def convert(v):
-            try:
-                # handles numpy/pandas NaN
-                return None if (isinstance(v, float) and math.isnan(v)) else v
-            except Exception:
-                return v
-        return {k: convert(v) for k, v in d.items()}
-
     @classmethod
     def parse_docker_stats_output(cls, file_path: str):
         """
         Parse CSV with header: ts,Container,CPU%,MemUsage
+        Aggregate per service type (strip numeric suffixes).
         """
         df = pd.read_csv(file_path)
 
@@ -151,19 +142,36 @@ class OutputParser:
         df['cpu_pct']   = df['CPU%'].map(cls._cpu_to_float)
         df['mem_bytes'] = df['MemUsage'].map(cls._mem_to_bytes)
 
-        # Aggregate per container
-        grp = df.groupby('Container', as_index=True)
-        result = {
-            "container_cpu_usage_mean":    grp['cpu_pct'].mean().to_dict(),
-            "container_cpu_usage_p95":     grp['cpu_pct'].apply(cls._p95).to_dict(),
-            "container_cpu_usage_max":     grp['cpu_pct'].max().to_dict(),
-            "container_cpu_usage_samples": grp['cpu_pct'].count().astype(int).to_dict(),
-            "container_mem_usage_mean":    grp['mem_bytes'].mean().to_dict(),
-            "container_mem_usage_p95":     grp['mem_bytes'].apply(cls._p95).to_dict(),
-            "container_mem_usage_max":     grp['mem_bytes'].max().to_dict(),
-            "container_mem_usage_samples": grp['mem_bytes'].count().astype(int).to_dict(),
+        # Remove suffix like -1, -2, ...
+        df['Service'] = df['Container'].str.replace(r'-\d+$', '', regex=True)
+
+        include = ["socialnetwork-media-service", "socialnetwork-compose-post-service", "socialnetwork-home-timeline-service"]
+        df = df[df['Service'].isin(include)]
+
+        if df.empty:
+            return {}
+
+        # Aggregate by Service (not by instance)
+        grp = df.groupby('Service', as_index=True)
+        metrics = {
+            "cpu_usage_mean":    grp['cpu_pct'].mean().to_dict(),
+            "cpu_usage_p95":     grp['cpu_pct'].apply(cls._p95).to_dict(),
+            "cpu_usage_max":     grp['cpu_pct'].max().to_dict(),
+            "cpu_usage_samples": grp['cpu_pct'].count().astype(int).to_dict(),
+            "mem_usage_mean":    grp['mem_bytes'].mean().to_dict(),
+            "mem_usage_p95":     grp['mem_bytes'].apply(cls._p95).to_dict(),
+            "mem_usage_max":     grp['mem_bytes'].max().to_dict(),
+            "mem_usage_samples": grp['mem_bytes'].count().astype(int).to_dict(),
         }
-        return cls._nan_to_none(result)
+        result = {}
+        for metric, service_map in metrics.items():
+            for service, val in service_map.items():
+                short_service = service.replace("socialnetwork-", "").replace("-", "_")
+                result[f"{short_service}_{metric}"] = (
+                    None if (isinstance(val, float) and math.isnan(val)) else val
+                )
+
+        return result
 
 class RunnerConfig:
     ROOT_DIR = Path(dirname(realpath(__file__)))
@@ -283,7 +291,7 @@ class RunnerConfig:
         self.docker_stats_start = (
             f"bash -lc 'DIR={self.external_run_dir}; FILE={self.docker_stats_csv_filename}; INT=1; "
             f"mkdir -p \"$DIR\"; echo \"ts,Container,CPU%,MemUsage\" > \"$DIR/$FILE\"; "
-            f"( while :; do docker stats --no-stream --format \"{{{{.Container}}}},{{{{.CPUPerc}}}},{{{{.MemUsage}}}}\" "
+            f"( while :; do docker stats --no-stream --format \"{{{{.Name}}}},{{{{.CPUPerc}}}},{{{{.MemUsage}}}}\" "
             f"| awk -v ts=\"$(date +%s)\" -F, '\\''{{print ts\",\"$0}}'\\'' >> \"$DIR/$FILE\"; "
             f"sleep \"$INT\"; done ) & echo $! > \"$DIR/docker_stats.pid\"'")
         self.docker_stats_stop = (
