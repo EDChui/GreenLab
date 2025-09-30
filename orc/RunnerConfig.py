@@ -367,9 +367,9 @@ class RunnerConfig:
         local_energibridge_csv = context.run_dir / self.energibridge_csv_filename
         local_docker_stats_csv = context.run_dir / self.docker_stats_csv_filename
         
-        ssh.copy_remote_to_local(remote_energibridge_csv, str(local_energibridge_csv))
+        ssh.copy_file_from_remote(remote_energibridge_csv, str(local_energibridge_csv))
         output.console_log_OK(f"Copied {remote_energibridge_csv} to {local_energibridge_csv}")
-        ssh.copy_remote_to_local(remote_docker_stats_csv, str(local_docker_stats_csv))
+        ssh.copy_file_from_remote(remote_docker_stats_csv, str(local_docker_stats_csv))
         output.console_log_OK(f"Copied {remote_docker_stats_csv} to {local_docker_stats_csv}")
         
         # TODO: Parse the output to populate run data
@@ -389,9 +389,7 @@ class RunnerConfig:
 
         # TODO: Remove measurements files from remote machine
         output.console_log("Removing measurement files from remote machine...")
-        # FIXME: @Raptor `AttributeError: 'RunnerConfig' object has no attribute 'energibridge_csv_filename'`
-        ssh.execute_remote_command(f"rm -f {self.external_run_dir}/{self.energibridge_csv_filename}")
-        ssh.execute_remote_command(f"rm -f {self.external_run_dir}/{self.docker_stats_csv_filename}")
+        ssh.execute_remote_command(f"rm -rf {self.external_run_dir}")
         output.console_log_OK("Measurement files removed from remote machine.")
 
         pass
