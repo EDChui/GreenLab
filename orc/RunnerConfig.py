@@ -34,29 +34,36 @@ DEBUG_MODE = getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")
 CPU_COUNT = 32
 RAPL_OVERFLOW_VALUE = 262143.328850 # Found via `cat /sys/class/powercap/intel-rapl:0/max_energy_range_uj` in uJ
 
-class OutputParser:
-    def parse_energibridge_output(file_path):
+class EnergibridgeOutputParser:
+    target_columns = [
+        'TOTAL_MEMORY', 'TOTAL_SWAP', 'USED_MEMORY', 'USED_SWAP']
+    + [f'CPU_USAGE_{i}' for i in range(CPU_COUNT)]
+    + [f'CPU_FREQUENCY_{i}' for i in range(CPU_COUNT)
+    ]
+
+    delta_target_columns = [
+        'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)', 'PP0_ENERGY (J)'
+    ]
+
+    @classmethod
+    def data_columns(cls) -> list:
+        return cls.target_columns + cls.delta_target_columns
+
+    @classmethod
+    def parse_output(cls, file_path) -> dict:
         """
         Parses the energibridge CSV output file to compute average values for specified metrics.
         This code is adapted from: https://github.com/S2-group/python-compilers-rep-pkg
         """
-        # Define target columns
-        target_columns = [
-            'TOTAL_MEMORY', 'TOTAL_SWAP', 'USED_MEMORY', 'USED_SWAP'] + [f'CPU_USAGE_{i}' for i in range(CPU_COUNT)] + [f'CPU_FREQUENCY_{i}' for i in range(CPU_COUNT)]
-
-        delta_target_columns = [
-            'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)', 'PP0_ENERGY (J)'
-        ]
-
         # Read the file into a pandas DataFrame
         df = pd.read_csv(file_path).apply(pd.to_numeric, errors='coerce')
 
         # Calculate column-wise averages, ignoring NaN values and deltas from start of experiment to finish
-        averages = df[target_columns].mean().to_dict()
+        averages = df[cls.target_columns].mean().to_dict()
         deltas = {}
 
         # Account and mitigate potential RAPL overflow during metric collection
-        for column in delta_target_columns:
+        for column in cls.delta_target_columns:
             overflow_counter = 0
             # Iterate and adjust values in the array
             column_data = df[column].to_numpy()
@@ -70,8 +77,11 @@ class OutputParser:
 
         return dict(averages.items() | deltas.items())
 
+class DockerStatsOutputParser:
+    target_services = ["media_service", "home_timeline_service", "compose_post_service"]
+
     @staticmethod
-    def _mem_to_bytes(mem_usage_str: str):
+    def _mem_to_bytes(mem_usage_str: str) -> float:
         """
         Convert the 'used' part of docker's MemUsage to bytes.
         Example: '824.3MiB / 2.00GiB' -> 824.3 * 1024**2
@@ -109,7 +119,7 @@ class OutputParser:
         return val * mult.get(unit, 1)
 
     @staticmethod
-    def _cpu_to_float(cpu_str: str):
+    def _cpu_to_float(cpu_str: str) -> float:
         """Convert '5.23%' -> 5.23"""
         if not isinstance(cpu_str, str):
             return math.nan
@@ -120,12 +130,20 @@ class OutputParser:
             return math.nan
 
     @staticmethod
-    def _p95(series: pd.Series):
+    def _p95(series: pd.Series) -> float:
         x = pd.to_numeric(series, errors='coerce').dropna()
         return float(np.percentile(x, 95)) if not x.empty else math.nan
 
     @classmethod
-    def parse_docker_stats_output(cls, file_path: str):
+    def data_columns(cls):
+        base_metrics = [
+            "cpu_usage_mean", "cpu_usage_p95", "cpu_usage_max", "cpu_usage_samples",
+            "mem_usage_mean", "mem_usage_p95", "mem_usage_max", "mem_usage_samples"
+        ]
+        return [f"{service}_{metric}" for service in cls.target_services for metric in base_metrics]
+
+    @classmethod
+    def parse_output(cls, file_path: str) -> dict:
         """
         Parse CSV with header: ts,Container,CPU%,MemUsage
         Aggregate per service type (strip numeric suffixes).
@@ -145,7 +163,7 @@ class OutputParser:
         # Remove suffix like -1, -2, ...
         df['Service'] = df['Container'].str.replace(r'-\d+$', '', regex=True)
 
-        include = ["socialnetwork-media-service", "socialnetwork-compose-post-service", "socialnetwork-home-timeline-service"]
+        include = [f"socialnetwork-{service.replace('_', '-')}" for service in cls.target_services]
         df = df[df['Service'].isin(include)]
 
         if df.empty:
@@ -172,6 +190,21 @@ class OutputParser:
                 )
 
         return result
+
+class LocustStatsOutputParser:
+    @classmethod
+    def data_columns(cls) -> list:
+        return ['throughput', 'latency_p50', 'latency_p90', 'latency_p95', 'latency_p99'] 
+
+    @classmethod
+    def parse_output(cls, locust_stats) -> dict:
+        return {
+            "throughput": locust_stats.num_requests / locust_stats.total_response_time,
+            "latency_p50": locust_stats.get_response_time_percentile(0.50),
+            "latency_p90": locust_stats.get_response_time_percentile(0.90),
+            "latency_p95": locust_stats.get_response_time_percentile(0.95),
+            "latency_p99": locust_stats.get_response_time_percentile(0.99)
+        }
 
 class RunnerConfig:
     ROOT_DIR = Path(dirname(realpath(__file__)))
@@ -233,11 +266,16 @@ class RunnerConfig:
             factor1 = FactorModel("cpu_governor", ['performance'])
             factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
             factor3 = FactorModel("load_level", ['debug'])
+        # TODO: Data columns for measurement results of run_table.csv
+        energybridge_data_columns = EnergibridgeOutputParser.data_columns()
+        docker_stats_data_columns = DockerStatsOutputParser.data_columns()
+        client_metric_data_columns = LocustStatsOutputParser.data_columns()  
+        run_table_data_columns = ["run_time"] + energybridge_data_columns + docker_stats_data_columns + client_metric_data_columns
         self.run_table_model = RunTableModel(
             factors=[factor1, factor2, factor3],
             repetitions=5 if not DEBUG_MODE else 1,
             shuffle=True if not DEBUG_MODE else False,
-            data_columns=['avg_cpu', 'avg_mem']     # TODO: Data columns for measurement results of run_table.csv
+            data_columns=run_table_data_columns
         )
         return self.run_table_model
 
@@ -315,6 +353,7 @@ class RunnerConfig:
         load_type = LoadType[context.execute_run['load_type'].upper()]
         load_level = LoadLevel[context.execute_run['load_level'].upper()]
         output.console_log(f"Firing workload: {load_type.name} at {load_level.name} level...")
+        # Locust performance metrics
         self.workload_result = workloadGenerator.fire_load(load_type, load_level)
 
         output.console_log_OK('Run has successfully started.')
@@ -329,16 +368,6 @@ class RunnerConfig:
         
         self.run_time = time.time() - self.run_time
         output.console_log_OK(f'Run has completed in {self.run_time:.2f} seconds.')
-
-        # Collect Locust performance metrics
-        locust_stats = self.workload_result
-        self.client_metrics = {
-            "throughput": locust_stats.num_requests / locust_stats.total_response_time,
-            "latency_p50": locust_stats.get_response_time_percentile(0.50),
-            "latency_p90": locust_stats.get_response_time_percentile(0.90),
-            "latency_p95": locust_stats.get_response_time_percentile(0.95),
-            "latency_p99": locust_stats.get_response_time_percentile(0.99)
-        }
 
     def interact(self, context: RunnerContext) -> None:
         """Perform any interaction with the running target system here, or block here until the target finishes."""
@@ -369,10 +398,11 @@ class RunnerConfig:
         ssh.copy_file_from_remote(remote_docker_stats_csv, str(local_docker_stats_csv))
         
         # Parse the output to populate run data
-        energibridge_data = OutputParser.parse_energibridge_output(local_energibridge_csv)
-        docker_stats_data = OutputParser.parse_docker_stats_output(local_docker_stats_csv)
+        energibridge_data = EnergibridgeOutputParser.parse_output(local_energibridge_csv)
+        docker_stats_data = DockerStatsOutputParser.parse_output(local_docker_stats_csv)
+        locust_stats_data = LocustStatsOutputParser.parse_output(self.workload_result)
 
-        return {**energibridge_data, **docker_stats_data, **self.client_metrics}
+        return {"run_time": self.run_time, **energibridge_data, **docker_stats_data, **locust_stats_data}
 
     def after_experiment(self) -> None:
         """Perform any activity required after stopping the experiment here
