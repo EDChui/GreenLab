@@ -14,6 +14,9 @@ from os import getenv
 from os.path import dirname, realpath
 from dotenv import load_dotenv
 import pandas as pd
+import math
+import re
+import numpy as np
 
 # Add the current directory to Python path to allow local imports
 import sys
@@ -67,22 +70,108 @@ class OutputParser:
 
         return dict(averages.items() | deltas.items())
 
-    def parse_docker_stats_output(file_path):
+    @staticmethod
+    def _mem_to_bytes(mem_usage_str: str):
         """
-        Parses the docker stats output file to compute average CPU and memory usage.
+        Convert the 'used' part of docker's MemUsage to bytes.
+        Example: '824.3MiB / 2.00GiB' -> 824.3 * 1024**2
         """
-        df = pd.read_csv(file_path, names=['Container', 'CPU%', 'MemUsage'])
-        
-        # Clean and convert CPU% to float
-        avg_cpu = df['CPU%'].str.rstrip('%').astype(float).mean()
-        
-        # Clean and convert MemUsage to float (in MiB)
-        avg_mem = df["MemUsage"].str.split('/').str[0].str.rstrip('MiB').astype(float).mean()
-        
-        return {
-            'avg_cpu': avg_cpu,
-            'avg_mem': avg_mem
+        if not isinstance(mem_usage_str, str):
+            return math.nan
+        # Only the "used" side before the slash
+        used = mem_usage_str.split('/', 1)[0].strip()
+        m = re.match(r'^\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGT]?i?B)\s*$', used, re.IGNORECASE)
+        if not m:
+            parts = used.split()
+            if len(parts) != 2:
+                return math.nan
+            val_str, unit = parts[0].replace(',', '.'), parts[1]
+            try:
+                val = float(val_str)
+            except Exception:
+                return math.nan
+            unit = unit.upper()
+        else:
+            val = float(m.group(1))
+            unit = m.group(2).upper()
+
+        mult = {
+            'B': 1,
+            'KB': 1000,
+            'MB': 1000**2,
+            'GB': 1000**3,
+            'TB': 1000**4,
+            'KIB': 1024,
+            'MIB': 1024**2,
+            'GIB': 1024**3,
+            'TIB': 1024**4,
         }
+        return val * mult.get(unit, 1)
+
+    @staticmethod
+    def _cpu_to_float(cpu_str: str):
+        """Convert '5.23%' -> 5.23"""
+        if not isinstance(cpu_str, str):
+            return math.nan
+        s = cpu_str.strip().rstrip('%').replace(',', '.')
+        try:
+            return float(s)
+        except Exception:
+            return math.nan
+
+    @staticmethod
+    def _p95(series: pd.Series):
+        x = pd.to_numeric(series, errors='coerce').dropna()
+        return float(np.percentile(x, 95)) if not x.empty else math.nan
+
+    @classmethod
+    def parse_docker_stats_output(cls, file_path: str):
+        """
+        Parse CSV with header: ts,Container,CPU%,MemUsage
+        Aggregate per service type (strip numeric suffixes).
+        """
+        df = pd.read_csv(file_path)
+
+        expected = {'ts', 'Container', 'CPU%', 'MemUsage'}
+        if not expected.issubset(df.columns):
+            raise ValueError(
+                f"Expected header {sorted(expected)} in {file_path}, found {list(df.columns)}"
+            )
+
+        # Parse numeric columns
+        df['cpu_pct']   = df['CPU%'].map(cls._cpu_to_float)
+        df['mem_bytes'] = df['MemUsage'].map(cls._mem_to_bytes)
+
+        # Remove suffix like -1, -2, ...
+        df['Service'] = df['Container'].str.replace(r'-\d+$', '', regex=True)
+
+        include = ["socialnetwork-media-service", "socialnetwork-compose-post-service", "socialnetwork-home-timeline-service"]
+        df = df[df['Service'].isin(include)]
+
+        if df.empty:
+            return {}
+
+        # Aggregate by Service (not by instance)
+        grp = df.groupby('Service', as_index=True)
+        metrics = {
+            "cpu_usage_mean":    grp['cpu_pct'].mean().to_dict(),
+            "cpu_usage_p95":     grp['cpu_pct'].apply(cls._p95).to_dict(),
+            "cpu_usage_max":     grp['cpu_pct'].max().to_dict(),
+            "cpu_usage_samples": grp['cpu_pct'].count().astype(int).to_dict(),
+            "mem_usage_mean":    grp['mem_bytes'].mean().to_dict(),
+            "mem_usage_p95":     grp['mem_bytes'].apply(cls._p95).to_dict(),
+            "mem_usage_max":     grp['mem_bytes'].max().to_dict(),
+            "mem_usage_samples": grp['mem_bytes'].count().astype(int).to_dict(),
+        }
+        result = {}
+        for metric, service_map in metrics.items():
+            for service, val in service_map.items():
+                short_service = service.replace("socialnetwork-", "").replace("-", "_")
+                result[f"{short_service}_{metric}"] = (
+                    None if (isinstance(val, float) and math.isnan(val)) else val
+                )
+
+        return result
 
 class RunnerConfig:
     ROOT_DIR = Path(dirname(realpath(__file__)))
@@ -121,7 +210,10 @@ class RunnerConfig:
         ])
         self.run_table_model = None  # Initialized later
 
-        self.testbed_project_directory = "~/GreenLab/testbed/"
+        self.testbed_project_directory = "~/GreenLab/testbed"
+        self.external_run_dir = f'{self.testbed_project_directory}/experiments'
+        self.energibridge_csv_filename = "energibridge.csv"
+        self.docker_stats_csv_filename = "docker_stats.csv"
 
         self.energibridge_metric_capturing_interval : int = 200                         # milliseconds
         self.warmup_time                            : int = 90 if not DEBUG_MODE else 5 # seconds
@@ -133,21 +225,29 @@ class RunnerConfig:
     def create_run_table_model(self) -> RunTableModel:
         """Create and return the run_table model here. A run_table is a List (rows) of tuples (columns),
         representing each run performed"""
-        factor1 = FactorModel("cpu_governor", ['performance', 'powersave', 'userspace', 'ondemand', 'conservative', 'schedutil'])
-        factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])   # TODO: Use actual and meaningful name load types
-        factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
+        if not DEBUG_MODE:
+            factor1 = FactorModel("cpu_governor", ['performance', 'powersave', 'userspace', 'ondemand', 'conservative', 'schedutil'])
+            factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
+            factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
+        else:
+            factor1 = FactorModel("cpu_governor", ['performance'])
+            factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
+            factor3 = FactorModel("load_level", ['debug'])
         self.run_table_model = RunTableModel(
             factors=[factor1, factor2, factor3],
             repetitions=5 if not DEBUG_MODE else 1,
             shuffle=True if not DEBUG_MODE else False,
-            data_columns=['avg_cpu', 'avg_mem']     # TODO: Data columns for measurement results
+            data_columns=['avg_cpu', 'avg_mem']     # TODO: Data columns for measurement results of run_table.csv
         )
         return self.run_table_model
 
     def before_experiment(self) -> None:
         """Perform any activity required before starting the experiment here
         Invoked only once during the lifetime of the program."""
-        pass
+        ssh = ExternalMachineAPI()
+        ssh.execute_remote_command(f"mkdir -p {self.external_run_dir}")
+        output.console_log_OK(f"Created experiment directory at {self.external_run_dir} on remote machine.")
+        del ssh
 
     def before_run(self) -> None:
         """Perform any activity required before starting a run.
@@ -161,11 +261,12 @@ class RunnerConfig:
         Activities after starting the run should also be performed here."""
         ssh = ExternalMachineAPI()
 
-        # === SSH Set CPU governor ===
+        # SSH Set CPU governor
         cpu_governor = context.execute_run['cpu_governor']
         ssh.execute_remote_command(f"sudo set-governor.sh {cpu_governor}")
+        output.console_log_OK(f"Set CPU governor to {cpu_governor}")
 
-        # === Warmup machine ===
+        # Warmup machine
         output.console_log(f"Warming up machine for {self.warmup_time} seconds...")
         # SSH start warmup task
         ssh.execute_remote_command(f"python3 {self.testbed_project_directory}/warmup.py 1000 & pid=$!; echo $pid")
@@ -179,44 +280,60 @@ class RunnerConfig:
         output.console_log_OK("Warmup finished. Experiment is starting now!")
         
         # Prepare commands for measurement
-        self.external_run_dir = f'{self.testbed_project_directory}/experiments/'
-        self.energibridge_csv_filename = "energibridge.csv"
-        sleep_duration_seconds = 0 # TODO: Long enough for the whole workload generation to finish
+        # Server-level energy measurement with EnergiBridge
+        sleep_duration_seconds = 300 # Long enough for the whole workload generation to finish
         self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
-        # TODO: Pending response from TA. Container-level energy measurement tools
+        # TODO: Container-level energy measurement tools with scaphandre
 
-        # TODO: Docker stats command for collecting container-level CPU and memory usage
-        self.docker_stats_csv_filename = "docker_stats.csv"
-        self.docker_stats_command = f"docker stats --no-stream --format \"{{{{.Container}}}},{{{{.CPUPerc}}}},{{{{.MemUsage}}}}\" > {self.external_run_dir}/{self.docker_stats_csv_filename}"
+        # Commands for collecting container-level CPU and memory usage on host machine: samples per second
+        self.docker_stats_start = (
+            f"bash -lc 'DIR={self.external_run_dir}; FILE={self.docker_stats_csv_filename}; INT=1; "
+            f"mkdir -p \"$DIR\"; echo \"ts,Container,CPU%,MemUsage\" > \"$DIR/$FILE\"; "
+            f"( while :; do docker stats --no-stream --format \"{{{{.Name}}}},{{{{.CPUPerc}}}},{{{{.MemUsage}}}}\" "
+            f"| awk -v ts=\"$(date +%s)\" -F, '\\''{{print ts\",\"$0}}'\\'' >> \"$DIR/$FILE\"; "
+            f"sleep \"$INT\"; done ) & echo $! > \"$DIR/docker_stats.pid\"'")
+        self.docker_stats_stop = (
+            f"bash -lc 'DIR={self.external_run_dir}; "
+            f"[ -f \"$DIR/docker_stats.pid\" ] && kill -TERM \"$(cat \"$DIR/docker_stats.pid\")\" && rm -f \"$DIR/docker_stats.pid\" || true'")
         output.console_log_OK('Run configuration is successful.')
 
     def start_measurement(self, context: RunnerContext) -> None:
         """Perform any activity required for starting measurements."""
-        ssh = ExternalMachineAPI()
+        ssh_energibridge = ExternalMachineAPI() # Separate SSH client for energibridge to avoid blocking
+        ssh_docker_stats = ExternalMachineAPI()
         workloadGenerator = WorkloadGenerator()
-        output.console_log(f'Running command through energibridge with:\n{self.execution_command}')
         self.run_time = time.time()
 
-        # TODO: SSH execute measurement commands
-        ssh.execute_remote_command(self.energibridge_command)
-        ssh.execute_remote_command(self.docker_stats_command)
+        # SSH execute measurement commands
+        ssh_energibridge.execute_remote_command(f"{self.energibridge_command} & pid=$!; echo $pid")
+        energibridge_pid = ssh_energibridge.stdout.readline().strip()
+        output.console_log_OK(f"EnergiBridge started with PID {energibridge_pid}")
+        ssh_docker_stats.execute_remote_command(self.docker_stats_start)
+        output.console_log_OK("Docker stats collected.")
 
-        # TODO: Fire workload with Locust
+        # Fire workload with Locust
         load_type = LoadType[context.execute_run['load_type'].upper()]
         load_level = LoadLevel[context.execute_run['load_level'].upper()]
+        output.console_log(f"Firing workload: {load_type.name} at {load_level.name} level...")
         self.workload_result = workloadGenerator.fire_load(load_type, load_level)
 
         output.console_log_OK('Run has successfully started.')
 
-        # TODO: (Optional) Read EnergiBridge summary output
+        # Kill energibridge after workload is done
+        ssh_energibridge.execute_remote_command(f"kill {energibridge_pid}")
+        output.console_log_OK("EnergiBridge stopped.")
+
+        # Stop docker stats collection
+        ssh_docker_stats.execute_remote_command(self.docker_stats_stop)
+        output.console_log_OK("Docker stats collection stopped.")
         
         self.run_time = time.time() - self.run_time
         output.console_log_OK(f'Run has completed in {self.run_time:.2f} seconds.')
 
-        # TODO: Collect Locust performance metrics
+        # Collect Locust performance metrics
         locust_stats = self.workload_result
         self.client_metrics = {
-            "throughput": locust_stats.num_requests / locust_stats.total_run_time,
+            "throughput": locust_stats.num_requests / locust_stats.total_response_time,
             "latency_p50": locust_stats.get_response_time_percentile(0.50),
             "latency_p90": locust_stats.get_response_time_percentile(0.90),
             "latency_p95": locust_stats.get_response_time_percentile(0.95),
@@ -242,18 +359,16 @@ class RunnerConfig:
         Returns a dictionary with keys `self.run_table_model.data_columns` and their values populated"""
 
         ssh = ExternalMachineAPI()
-        # TODO: Copy output files from remote to local
+        # Copy output files from remote to local
         remote_energibridge_csv = f"{self.external_run_dir}/{self.energibridge_csv_filename}"
         remote_docker_stats_csv = f"{self.external_run_dir}/{self.docker_stats_csv_filename}"
         local_energibridge_csv = context.run_dir / self.energibridge_csv_filename
         local_docker_stats_csv = context.run_dir / self.docker_stats_csv_filename
         
-        ssh.copy_remote_to_local(remote_energibridge_csv, str(local_energibridge_csv))
-        output.console_log_OK(f"Copied {remote_energibridge_csv} to {local_energibridge_csv}")
-        ssh.copy_remote_to_local(remote_docker_stats_csv, str(local_docker_stats_csv))
-        output.console_log_OK(f"Copied {remote_docker_stats_csv} to {local_docker_stats_csv}")
+        ssh.copy_file_from_remote(remote_energibridge_csv, str(local_energibridge_csv))
+        ssh.copy_file_from_remote(remote_docker_stats_csv, str(local_docker_stats_csv))
         
-        # TODO: Parse the output to populate run data
+        # Parse the output to populate run data
         energibridge_data = OutputParser.parse_energibridge_output(local_energibridge_csv)
         docker_stats_data = OutputParser.parse_docker_stats_output(local_docker_stats_csv)
 
@@ -268,10 +383,9 @@ class RunnerConfig:
         output.console_log("Cleaning up resources...")
         output.console_log_OK("Resources cleaned up.")
 
-        # TODO: Remove measurements files from remote machine
+        # Remove measurements files from remote machine
         output.console_log("Removing measurement files from remote machine...")
-        ssh.execute_remote_command(f"rm -f {self.external_run_dir}/{self.energibridge_csv_filename}")
-        ssh.execute_remote_command(f"rm -f {self.external_run_dir}/{self.docker_stats_csv_filename}")
+        ssh.execute_remote_command(f"rm -rf {self.external_run_dir}")
         output.console_log_OK("Measurement files removed from remote machine.")
 
         pass

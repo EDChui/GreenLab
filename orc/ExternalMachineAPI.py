@@ -7,8 +7,6 @@ from dotenv import load_dotenv
 from scp import SCPClient
 load_dotenv()
 
-DEBUG_MODE = getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")
-
 class ExternalMachineAPI:
     """
     API to interact with external machine via SSH.
@@ -23,45 +21,11 @@ class ExternalMachineAPI:
         self.stderr = None
         
         try:
-            # TODO: Remove DEBUG_MODE and use proper network setup
-            if DEBUG_MODE:
-                jump_host = getenv("GLGATE_HOSTNAME")
-                jump_port = int(getenv("GLGATE_PORT", 42224))
-                jump_user = getenv("GLGATE_USERNAME")
-                jump_key = path.expanduser(getenv("GLGATE_KEY_PATH"))
-
-                self.jump_client = paramiko.SSHClient()
-                self.jump_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                self.jump_client.connect(
-                    hostname=jump_host,
-                    port=jump_port,
-                    username=jump_user,
-                    key_filename=jump_key
-                )
-
-                # Open channel from jump host to target (gl3)
-                target_host = getenv("GL3_HOSTNAME")
-                self.jump_transport = self.jump_client.get_transport()
-                dest_addr = (target_host, 22)
-                local_addr = ("127.0.0.1", 0)
-                channel = self.jump_transport.open_channel("direct-tcpip", dest_addr, local_addr)
-
-                # Connect to gl3 using the channel as a socket
-                self.ssh.connect(
-                    hostname=target_host,
-                    username=jump_user,
-                    sock=channel,
-                    key_filename=jump_key
-                )
-            else:
-                self.ssh.connect(
-                    hostname=getenv("GL3_HOSTNAME"),
-                    username=getenv("GL3_USERNAME"),
-                    password=getenv("GL3_PASSWORD")
-                )
-            
+            self.ssh.connect(
+                hostname=getenv("GL3_HOSTNAME"),
+                key_filename=path.expanduser(getenv("GL3_KEY_PATH")),
+            )
             self.ssh.get_transport().set_keepalive(30)
-            
         except paramiko.SSHException:
             output.console_log_FAIL('Failed to send run command to machine!')
             
@@ -104,9 +68,17 @@ class ExternalMachineAPI:
         return None
 
     def __del__(self):
-        self.stdin.close()
-        self.stdout.close()
-        self.stderr.close()
-        self.ssh.close()
-        if DEBUG_MODE:
-            self.jump_client.close()
+        if self.stdin:
+            self.stdin.close()
+        if self.stdout:
+            self.stdout.close()
+        if self.stderr:
+            self.stderr.close()
+        if self.ssh:
+            self.ssh.close()
+
+if __name__ == "__main__":
+    ssh = ExternalMachineAPI()
+    ssh.execute_remote_command("echo Hello, World!")
+    print(ssh.stdout.readline())
+    del ssh
