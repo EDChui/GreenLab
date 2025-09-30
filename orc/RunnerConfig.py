@@ -369,9 +369,7 @@ class RunnerConfig:
         local_docker_stats_csv = context.run_dir / self.docker_stats_csv_filename
         
         ssh.copy_file_from_remote(remote_energibridge_csv, str(local_energibridge_csv))
-        output.console_log_OK(f"Copied {remote_energibridge_csv} to {local_energibridge_csv}")
         ssh.copy_file_from_remote(remote_docker_stats_csv, str(local_docker_stats_csv))
-        output.console_log_OK(f"Copied {remote_docker_stats_csv} to {local_docker_stats_csv}")
         
         # TODO: Parse the output to populate run data
         energibridge_data = OutputParser.parse_energibridge_output(local_energibridge_csv)
