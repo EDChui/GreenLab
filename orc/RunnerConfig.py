@@ -309,7 +309,7 @@ class RunnerConfig:
         ssh.execute_remote_command(f"{self.energibridge_command} & pid=$!; echo $pid")
         energibridge_pid = ssh.stdout.readline().strip()
         output.console_log_OK(f"EnergiBridge started with PID {energibridge_pid}")
-        ssh.execute_remote_command(self.docker_stats_command)
+        ssh.execute_remote_command(self.docker_stats_start)
         output.console_log_OK("Docker stats collected.")
 
         # Fire workload with Locust
