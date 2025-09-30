@@ -237,7 +237,7 @@ class RunnerConfig:
             factors=[factor1, factor2, factor3],
             repetitions=5 if not DEBUG_MODE else 1,
             shuffle=True if not DEBUG_MODE else False,
-            data_columns=['avg_cpu', 'avg_mem']     # TODO: Data columns for measurement results
+            data_columns=['avg_cpu', 'avg_mem']     # TODO: Data columns for measurement results of run_table.csv
         )
         return self.run_table_model
 
@@ -280,15 +280,12 @@ class RunnerConfig:
         output.console_log_OK("Warmup finished. Experiment is starting now!")
         
         # Prepare commands for measurement
-
         # Server-level energy measurement with EnergiBridge
         sleep_duration_seconds = 300 # Long enough for the whole workload generation to finish
-        # FIXME: @Raptor No energibridge csv is created on gl3 machine
         self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
-        output.console_log(f"EnergiBridge command: {self.energibridge_command}")
-        # TODO: Pending response from TA. Container-level energy measurement tools
+        # TODO: Container-level energy measurement tools with scaphandre
 
-        # TODO: Commands for collecting container-level CPU and memory usage on host machine: samples per second
+        # Commands for collecting container-level CPU and memory usage on host machine: samples per second
         self.docker_stats_start = (
             f"bash -lc 'DIR={self.external_run_dir}; FILE={self.docker_stats_csv_filename}; INT=1; "
             f"mkdir -p \"$DIR\"; echo \"ts,Container,CPU%,MemUsage\" > \"$DIR/$FILE\"; "
@@ -302,8 +299,8 @@ class RunnerConfig:
 
     def start_measurement(self, context: RunnerContext) -> None:
         """Perform any activity required for starting measurements."""
-        ssh_energibridge = ExternalMachineAPI()
-        ssh = ExternalMachineAPI()
+        ssh_energibridge = ExternalMachineAPI() # Separate SSH client for energibridge to avoid blocking
+        ssh_docker_stats = ExternalMachineAPI()
         workloadGenerator = WorkloadGenerator()
         self.run_time = time.time()
 
@@ -311,7 +308,7 @@ class RunnerConfig:
         ssh_energibridge.execute_remote_command(f"{self.energibridge_command} & pid=$!; echo $pid")
         energibridge_pid = ssh_energibridge.stdout.readline().strip()
         output.console_log_OK(f"EnergiBridge started with PID {energibridge_pid}")
-        ssh.execute_remote_command(self.docker_stats_start)
+        ssh_docker_stats.execute_remote_command(self.docker_stats_start)
         output.console_log_OK("Docker stats collected.")
 
         # Fire workload with Locust
@@ -327,7 +324,7 @@ class RunnerConfig:
         output.console_log_OK("EnergiBridge stopped.")
 
         # Stop docker stats collection
-        ssh.execute_remote_command(self.docker_stats_stop)
+        ssh_docker_stats.execute_remote_command(self.docker_stats_stop)
         output.console_log_OK("Docker stats collection stopped.")
         
         self.run_time = time.time() - self.run_time
@@ -362,7 +359,7 @@ class RunnerConfig:
         Returns a dictionary with keys `self.run_table_model.data_columns` and their values populated"""
 
         ssh = ExternalMachineAPI()
-        # TODO: Copy output files from remote to local
+        # Copy output files from remote to local
         remote_energibridge_csv = f"{self.external_run_dir}/{self.energibridge_csv_filename}"
         remote_docker_stats_csv = f"{self.external_run_dir}/{self.docker_stats_csv_filename}"
         local_energibridge_csv = context.run_dir / self.energibridge_csv_filename
@@ -371,7 +368,7 @@ class RunnerConfig:
         ssh.copy_file_from_remote(remote_energibridge_csv, str(local_energibridge_csv))
         ssh.copy_file_from_remote(remote_docker_stats_csv, str(local_docker_stats_csv))
         
-        # TODO: Parse the output to populate run data
+        # Parse the output to populate run data
         energibridge_data = OutputParser.parse_energibridge_output(local_energibridge_csv)
         docker_stats_data = OutputParser.parse_docker_stats_output(local_docker_stats_csv)
 
@@ -386,7 +383,7 @@ class RunnerConfig:
         output.console_log("Cleaning up resources...")
         output.console_log_OK("Resources cleaned up.")
 
-        # TODO: Remove measurements files from remote machine
+        # Remove measurements files from remote machine
         output.console_log("Removing measurement files from remote machine...")
         ssh.execute_remote_command(f"rm -rf {self.external_run_dir}")
         output.console_log_OK("Measurement files removed from remote machine.")
