@@ -302,13 +302,14 @@ class RunnerConfig:
 
     def start_measurement(self, context: RunnerContext) -> None:
         """Perform any activity required for starting measurements."""
+        ssh_energibridge = ExternalMachineAPI()
         ssh = ExternalMachineAPI()
         workloadGenerator = WorkloadGenerator()
         self.run_time = time.time()
 
         # SSH execute measurement commands
-        ssh.execute_remote_command(f"{self.energibridge_command} & pid=$!; echo $pid")
-        energibridge_pid = ssh.stdout.readline().strip()
+        ssh_energibridge.execute_remote_command(f"{self.energibridge_command} & pid=$!; echo $pid")
+        energibridge_pid = ssh_energibridge.stdout.readline().strip()
         output.console_log_OK(f"EnergiBridge started with PID {energibridge_pid}")
         ssh.execute_remote_command(self.docker_stats_start)
         output.console_log_OK("Docker stats collected.")
@@ -322,7 +323,7 @@ class RunnerConfig:
         output.console_log_OK('Run has successfully started.')
 
         # Kill energibridge after workload is done
-        ssh.execute_remote_command(f"kill {energibridge_pid}")
+        ssh_energibridge.execute_remote_command(f"kill {energibridge_pid}")
         output.console_log_OK("EnergiBridge stopped.")
 
         # Stop docker stats collection
