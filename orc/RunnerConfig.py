@@ -35,11 +35,7 @@ CPU_COUNT = 32
 RAPL_OVERFLOW_VALUE = 262143.328850 # Found via `cat /sys/class/powercap/intel-rapl:0/max_energy_range_uj` in uJ
 
 class EnergibridgeOutputParser:
-    target_columns = [
-        'TOTAL_MEMORY', 'TOTAL_SWAP', 'USED_MEMORY', 'USED_SWAP']
-    + [f'CPU_USAGE_{i}' for i in range(CPU_COUNT)]
-    + [f'CPU_FREQUENCY_{i}' for i in range(CPU_COUNT)
-    ]
+    target_columns = ['TOTAL_MEMORY', 'TOTAL_SWAP', 'USED_MEMORY', 'USED_SWAP'] + [f'CPU_USAGE_{i}' for i in range(CPU_COUNT)] + [f'CPU_FREQUENCY_{i}' for i in range(CPU_COUNT)]
 
     delta_target_columns = [
         'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)', 'PP0_ENERGY (J)'
