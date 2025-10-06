@@ -17,6 +17,7 @@ import pandas as pd
 import math
 import re
 import numpy as np
+import json
 
 # Add the current directory to Python path to allow local imports
 import sys
@@ -33,6 +34,7 @@ load_dotenv()
 DEBUG_MODE = getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")
 CPU_COUNT = 32
 RAPL_OVERFLOW_VALUE = 262143.328850 # Found via `cat /sys/class/powercap/intel-rapl:0/max_energy_range_uj` in uJ
+TARGET_SERVICES = ["media_service", "home_timeline_service", "compose_post_service"]
 
 class EnergibridgeOutputParser:
     target_columns = ['TOTAL_MEMORY', 'TOTAL_SWAP', 'USED_MEMORY', 'USED_SWAP'] + [f'CPU_USAGE_{i}' for i in range(CPU_COUNT)] + [f'CPU_FREQUENCY_{i}' for i in range(CPU_COUNT)]
@@ -73,9 +75,49 @@ class EnergibridgeOutputParser:
 
         return dict(averages.items() | deltas.items())
 
-class DockerStatsOutputParser:
-    target_services = ["media_service", "home_timeline_service", "compose_post_service"]
+class ScaphandreOutputParser:
+    @classmethod
+    def data_columns(cls) -> []:
+        return [f"{service}_energy_joules" for service in TARGET_SERVICES]
 
+    @classmethod
+    def parse_output(cls, file_path: str) -> dict:
+        records = []
+
+        with open(file_path, "r") as f:
+            try:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    data = [data]
+            except json.JSONDecodeError:
+                # Handle line-delimited JSON entries
+                data = [json.loads(line) for line in f if line.strip()]
+
+        # Flattening
+        for entry in data:
+            timestamp = entry.get("timestamp")
+            sensors = entry.get("sensors", [])
+            for sensor in sensors:
+                for c in sensor.get("containers", []):
+                    records.append({
+                        "timestamp": timestamp,
+                        "sensor": sensor.get("sensor_name"),
+                        "container_name": c.get("container_name"),
+                        "energy_joules": c.get("energy_joules", 0.0)
+                    })
+
+        df = pd.DataFrame(records)
+        summary = df.groupby("container_name")["energy_joules"] \
+            .sum() \
+            .reset_index() \
+            .sort_values("energy_joules", ascending=False)
+        results = {}
+        for _, row in summary.iterrows():
+            name_key = row["container_name"].replace("-", "_") + "_energy_joules"
+            summary[name_key] = round(float(row["energy_joules"]), 2)
+        return results
+
+class DockerStatsOutputParser:
     @staticmethod
     def _mem_to_bytes(mem_usage_str: str) -> float:
         """
@@ -136,7 +178,7 @@ class DockerStatsOutputParser:
             "cpu_usage_mean", "cpu_usage_p95", "cpu_usage_max", "cpu_usage_samples",
             "mem_usage_mean", "mem_usage_p95", "mem_usage_max", "mem_usage_samples"
         ]
-        return [f"{service}_{metric}" for service in cls.target_services for metric in base_metrics]
+        return [f"{service}_{metric}" for service in TARGET_SERVICES for metric in base_metrics]
 
     @classmethod
     def parse_output(cls, file_path: str) -> dict:
@@ -159,7 +201,7 @@ class DockerStatsOutputParser:
         # Remove suffix like -1, -2, ...
         df['Service'] = df['Container'].str.replace(r'-\d+$', '', regex=True)
 
-        include = [f"socialnetwork-{service.replace('_', '-')}" for service in cls.target_services]
+        include = [f"socialnetwork-{service.replace('_', '-')}" for service in TARGET_SERVICES]
         df = df[df['Service'].isin(include)]
 
         if df.empty:
@@ -242,6 +284,7 @@ class RunnerConfig:
         self.testbed_project_directory = "~/GreenLab/testbed"
         self.external_run_dir = f'{self.testbed_project_directory}/experiments'
         self.energibridge_csv_filename = "energibridge.csv"
+        self.scaphandre_json_filename = "scaphandre_energy.json"
         self.docker_stats_csv_filename = "docker_stats.csv"
 
         self.energibridge_metric_capturing_interval : int = 200                         # milliseconds
@@ -264,9 +307,10 @@ class RunnerConfig:
             factor3 = FactorModel("load_level", ['debug'])
         # TODO: Data columns for measurement results of run_table.csv
         energybridge_data_columns = EnergibridgeOutputParser.data_columns()
+        scaphandre_data_columns = ScaphandreOutputParser.data_columns()
         docker_stats_data_columns = DockerStatsOutputParser.data_columns()
         client_metric_data_columns = LocustStatsOutputParser.data_columns()  
-        run_table_data_columns = ["run_time"] + energybridge_data_columns + docker_stats_data_columns + client_metric_data_columns
+        run_table_data_columns = ["run_time"] + energybridge_data_columns + scaphandre_data_columns + docker_stats_data_columns + client_metric_data_columns
         self.run_table_model = RunTableModel(
             factors=[factor1, factor2, factor3],
             repetitions=5 if not DEBUG_MODE else 1,
@@ -318,6 +362,14 @@ class RunnerConfig:
         sleep_duration_seconds = 300 # Long enough for the whole workload generation to finish
         self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
         # TODO: Container-level energy measurement tools with scaphandre
+        self.scaphandre_start = (
+            f"bash -lc 'DIR={self.external_run_dir}; FILE={self.scaphandre_json_filename}; "
+            f"mkdir -p \"$DIR\"; sudo scaphandre json -t 2 -n 0 -f \"$DIR/$FILE\" & echo $! > \"$DIR/scaphandre.pid\"'"
+        )
+        self.scaphandre_stop = (
+            f"bash -lc 'DIR={self.external_run_dir}; "
+            f"[ -f \"$DIR/scaphandre.pid\" ] && sudo kill -SIGINT $(cat \"$DIR/scaphandre.pid\") && rm -f \"$DIR/scaphandre.pid\" || true'"
+        )
 
         # Commands for collecting container-level CPU and memory usage on host machine: samples per second
         self.docker_stats_start = (
@@ -333,7 +385,9 @@ class RunnerConfig:
 
     def start_measurement(self, context: RunnerContext) -> None:
         """Perform any activity required for starting measurements."""
-        ssh_energibridge = ExternalMachineAPI() # Separate SSH client for energibridge to avoid blocking
+        # Separate SSH client for energibridge to avoid blocking
+        ssh_energibridge = ExternalMachineAPI()
+        ssh_scaphandre = ExternalMachineAPI()
         ssh_docker_stats = ExternalMachineAPI()
         workloadGenerator = WorkloadGenerator()
         self.run_time = time.time()
@@ -342,8 +396,10 @@ class RunnerConfig:
         ssh_energibridge.execute_remote_command(f"{self.energibridge_command} & pid=$!; echo $pid")
         energibridge_pid = ssh_energibridge.stdout.readline().strip()
         output.console_log_OK(f"EnergiBridge started with PID {energibridge_pid}")
+        ssh_scaphandre.execute_remote_command(self.scaphandre_start)
+        output.console_log_OK("Scaphandre started for container-level energy measurement.")
         ssh_docker_stats.execute_remote_command(self.docker_stats_start)
-        output.console_log_OK("Docker stats collected.")
+        output.console_log_OK("Docker stats collection started.")
 
         # Fire workload with Locust
         load_type = LoadType[context.execute_run['load_type'].upper()]
