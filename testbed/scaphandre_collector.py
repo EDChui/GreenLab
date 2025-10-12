@@ -15,10 +15,16 @@ import time
 import signal
 import sys
 from datetime import datetime, timezone
+import os
+from pathlib import Path
+
+HOME = Path.home()
+OUTPUT_DIR = HOME / "GreenLab" / "testbed" / "experiments"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_FILE = OUTPUT_DIR / "scaphandre_energy.jsonl"
 
 SCAPHANDRE_URL = "http://localhost:18080/metrics"
 TARGET_SERVICES = ["media_service", "home_timeline_service", "compose_post_service"]
-OUTPUT_FILE = "/experiments/scaphandre_energy.jsonl"
 INTERVAL = 2.0  # seconds
 
 # Graceful stop flag
