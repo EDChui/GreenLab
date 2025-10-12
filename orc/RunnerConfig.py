@@ -18,6 +18,7 @@ import math
 import re
 import numpy as np
 import json
+from datetime import datetime
 
 # Add the current directory to Python path to allow local imports
 import sys
@@ -98,71 +99,54 @@ class ScaphandreOutputParser:
     @staticmethod
     def _iso_to_epoch(ts: str) -> float:
         # "2025-10-06T13:15:24Z" -> seconds since epoch
-        from datetime import datetime, timezone
         return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
 
     @classmethod
     def parse_output(cls, file_path: str) -> dict:
+        """
+        Parse .jsonl file containing per-service power readings in microwatts.
+        Compute energy (J) for each service using trapezoid rule.
+        Returns dict:
+        {
+            "media_service_energy_joules": ...,
+            "home_timeline_service_energy_joules": ...,
+            "compose_post_service_energy_joules": ...
+        }
+        """
         rows = []
-
-        with open(file_path, "r") as f:
-            try:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    data = [data]
-            except json.JSONDecodeError:
-                # Handle line-delimited JSON entries
-                data = [json.loads(line) for line in f if line.strip()]
-
-        # Flattening
-        for entry in data:
-            t = cls._iso_to_epoch(entry.get("timestamp"))
-            for sensor in entry.get("sensors", []):
-                for c in sensor.get("containers", []):
-                    rows.append({
-                        "t": t,
-                        "container": c.get("container_name"),
-                        "power_w": c.get("power_watts", 0.0),
-                        "energy_j": c.get("energy_joules", 0.0),
-                    })
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    t = cls._iso_to_epoch(entry["timestamp"])
+                    row = {"t": t}
+                    for service in cls.TARGET_SERVICES:
+                        key = f"{service}_power_uW"
+                        if key in entry:
+                            row[service] = entry[key] / 1e6  # convert µW → W
+                        else:
+                            row[service] = 0.0
+                    rows.append(row)
+                except Exception as e:
+                    print(f"[ScaphandreOutputParser] Skipped invalid line: {e}")
 
         if not rows:
-            return {f"{s}_energy_joules": None for s in cls.target_services}
+            return {f"{service}_energy_joules": None for service in TARGET_SERVICES}
 
-        df = pd.DataFrame(rows).dropna(subset=["name"])
-        df["name_norm"] = df["name"].str.replace("-", "_")
+        df = pd.DataFrame(rows).sort_values("t").reset_index(drop=True)
 
         result = {}
-        for service in cls.target_services:
-            # match e.g. "media_service" to "media-service"
-            m = df[df["name_norm"] == service]
-            if m.empty:
-                result[f"{service}_energy_joules"] = None
-                continue
-
-            t = m["t"].to_numpy(dtype=float)
-
-            if m["p"].notna().any():
-                # integrate power directly (J = ∫ P dt)
-                p = m["p"].fillna(method="ffill").fillna(0.0).to_numpy(dtype=float)
+        for service in TARGET_SERVICES:
+            t = df["t"].to_numpy(dtype=float)
+            p = df[service].to_numpy(dtype=float)
+            if len(t) > 1:
+                # integrate power (Watts) over time (seconds) → Joules
                 E = float(np.trapz(p, t))
+                result[f"{service}_energy_joules"] = round(E, 2)
             else:
-                # derive power from energy series if available:
-                # if energy is per-interval, trapz over (e, t) == sum(e) when dt=1
-                e = m["e"].fillna(method="ffill").fillna(0.0).to_numpy(dtype=float)
-                # assume e is interval energy; approximate power = e/dt on intervals; integrate back to be robust
-                if len(e) >= 2:
-                    dt = np.diff(t)
-                    p = np.diff(e) / dt  # if e is cumulative; if e is interval, this becomes noisy but small
-                    # If p contains NaNs (constant e), fall back to sum of interval energies:
-                    if np.isnan(p).any() or np.allclose(p, 0):
-                        E = float(np.sum(e))
-                    else:
-                        E = float(np.trapz(p, t[1:]))
-                else:
-                    E = float(np.sum(e))
-
-            result[f"{service}_energy_joules"] = round(E, 2)
+                result[f"{service}_energy_joules"] = 0.0
 
         return result
 
@@ -333,7 +317,7 @@ class RunnerConfig:
         self.testbed_project_directory = "~/GreenLab/testbed"
         self.external_run_dir = f'{self.testbed_project_directory}/experiments'
         self.energibridge_csv_filename = "energibridge.csv"
-        self.scaphandre_json_filename = "scaphandre_energy.json"
+        self.scaphandre_json_filename = "scaphandre_energy.jsonl"
         self.docker_stats_csv_filename = "docker_stats.csv"
 
         self.energibridge_metric_capturing_interval : int = 1000                        # milliseconds
@@ -414,12 +398,15 @@ class RunnerConfig:
         self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
         # TODO: Container-level energy measurement tools with scaphandre, interval: 2s
         self.scaphandre_start = (
-            f"bash -lc 'DIR={self.external_run_dir}; FILE={self.scaphandre_json_filename}; "
-            f"mkdir -p \"$DIR\"; sudo scaphandre json -t 2 -n 0 -f \"$DIR/$FILE\" & echo $! > \"$DIR/scaphandre.pid\"'"
+            f"bash -lc 'DIR={self.testbed_project_directory}; "
+            f"nohup python3 $DIR/scaphandre_collector.py > $DIR/scaphandre_collector.out 2>&1 & "
+            f"echo $! > $DIR/scaphandre_collector.pid'"
         )
         self.scaphandre_stop = (
-            f"bash -lc 'DIR={self.external_run_dir}; "
-            f"[ -f \"$DIR/scaphandre.pid\" ] && sudo kill -SIGINT $(cat \"$DIR/scaphandre.pid\") && rm -f \"$DIR/scaphandre.pid\" || true'"
+            f"bash -lc 'DIR={self.testbed_project_directory}; "
+            f"[ -f $DIR/scaphandre_collector.pid ] && "
+            f"kill -TERM $(cat $DIR/scaphandre_collector.pid) && "
+            f"rm -f $DIR/scaphandre_collector.pid || true'"
         )
 
         # Commands for collecting container-level CPU and memory usage on host machine: samples per second
@@ -448,7 +435,7 @@ class RunnerConfig:
         energibridge_pid = ssh_energibridge.stdout.readline().strip()
         output.console_log_OK(f"EnergiBridge started with PID {energibridge_pid}")
         ssh_scaphandre.execute_remote_command(self.scaphandre_start)
-        output.console_log_OK("Scaphandre started for container-level energy measurement.")
+        output.console_log_OK("Scaphandre collector started for container-level energy measurement.")
         ssh_docker_stats.execute_remote_command(self.docker_stats_start)
         output.console_log_OK("Docker stats collection started.")
 
@@ -467,7 +454,7 @@ class RunnerConfig:
 
         # Stop Scaphandre
         ssh_scaphandre.execute_remote_command(self.scaphandre_stop)
-        output.console_log_OK("Scaphandre stopped.")
+        output.console_log_OK("Scaphandre collector stopped.")
 
         # Stop docker stats collection
         ssh_docker_stats.execute_remote_command(self.docker_stats_stop)

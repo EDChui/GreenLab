@@ -62,7 +62,7 @@ class BaseDSBUser(HttpUser):
         )
 
         login_form = {"username": self.username, "password": self.password, "login": "Login"}
-        r_login = self.client.post(
+        self.client.post(
             "/api/user/login",
             data=login_form,
             name="POST /user/login",
@@ -97,6 +97,7 @@ class ComposePostUser(BaseDSBUser):
             catch_response=True,
         )
 
+        # Treat 302 as success
         if r.status_code == 302:
             r.success()
 
@@ -149,6 +150,7 @@ class MediaUser(BaseDSBUser):
             allow_redirects=False,
             catch_response=True,
         )
+        # Treat 302 as success
         if r_c.status_code == 302:
             r_c.success()
 
