@@ -85,16 +85,21 @@ class ComposePostUser(BaseDSBUser):
     def compose_post(self):
         text = _random_post_text()
 
-        form_resp = self.client.post(
+        r = self.client.post(
             "/api/post/compose",
             data={
                 "post_type": "0",
                 "text": text,
-                "media_ids": "[]",
-                "media_types": "[]"
             },
             name="POST /compose_post (form)",
+            allow_redirects=False,
+            catch_response=True,
         )
+
+        if r.status_code == 302:
+            r.success()
+        else:
+            r.failure(f"Unexpected status {r.status_code}")
 
 
 class MediaUser(BaseDSBUser):
@@ -138,7 +143,17 @@ class MediaUser(BaseDSBUser):
             "media_ids": f'["{media_id}"]',
             "media_types": f'["{media_type}"]'
         }
-        self.client.post("/api/post/compose", data=body, name="POST /compose_with_media")
+        r_c = self.client.post(
+            "/api/post/compose", 
+            data=body, 
+            name="POST /compose_with_media",
+            allow_redirects=False,
+            catch_response=True,
+        )
+        if r_c.status_code == 302:
+            r_c.success()
+        else:
+            r_c.failure(f"Unexpected status {r_c.status_code}")
 
 
 def _random_post_text():
