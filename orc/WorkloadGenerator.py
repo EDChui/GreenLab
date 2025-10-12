@@ -25,9 +25,9 @@ class LoadType(Enum):
 class LoadLevel(Enum):
     # users, spawn_rate, duration(s)
     # ramp time: 10s
-    LOW    = (20,  2,  150)
-    MEDIUM = (200, 20, 150)
-    HIGH   = (500, 50, 150)
+    LOW    = (20,  2,  120)
+    MEDIUM = (200, 20, 120)
+    HIGH   = (500, 50, 120)
     DEBUG  = (3,   3,  10)  # For debugging only
     @property
     def users(self): return self.value[0]
