@@ -273,7 +273,7 @@ class DockerStatsOutputParser:
             for service, val in service_map.items():
                 short_service = service.replace("socialnetwork-", "").replace("-", "_")
                 result[f"{short_service}_{metric}"] = (
-                    None if (isinstance(val, float) and math.isnan(val)) else val
+                    None if (isinstance(val, float) and math.isnan(val)) else val / CPU_COUNT
                 )
 
         return result
@@ -337,7 +337,7 @@ class RunnerConfig:
         self.docker_stats_csv_filename = "docker_stats.csv"
 
         self.energibridge_metric_capturing_interval : int = 1000                        # milliseconds
-        self.warmup_time                            : int = 90 if not DEBUG_MODE else 5 # seconds
+        self.warmup_time                            : int = 60 if not DEBUG_MODE else 5 # seconds
         self.post_warmup_cooldown_time              : int = 30 if not DEBUG_MODE else 1 # seconds
 
         output.console_log("Custom config loaded")
