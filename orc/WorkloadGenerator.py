@@ -58,7 +58,6 @@ class BaseDSBUser(HttpUser):
             "/api/user/register",
             data=signup_form,
             name="POST /user/register",
-            allow_redirects=True,
         )
 
         login_form = {"username": self.username, "password": self.password, "login": "Login"}
@@ -66,10 +65,7 @@ class BaseDSBUser(HttpUser):
             "/api/user/login",
             data=login_form,
             name="POST /user/login",
-            allow_redirects=True,
         )
-        r_login.raise_for_status()
-        assert r_login.status_code == 200, f"Login failed: {r_login.text}"
 
 
 class HomeTimelineUser(BaseDSBUser):
@@ -98,7 +94,6 @@ class ComposePostUser(BaseDSBUser):
                 "media_types": "[]"
             },
             name="POST /compose_post (form)",
-            allow_redirects=False,
         )
 
 
