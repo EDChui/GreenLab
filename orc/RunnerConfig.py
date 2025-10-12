@@ -352,8 +352,10 @@ class RunnerConfig:
             factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
         else:
             factor1 = FactorModel("cpu_governor", ['performance'])
-            factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
-            factor3 = FactorModel("load_level", ['debug'])
+            # factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
+            # factor3 = FactorModel("load_level", ['debug'])
+            factor2 = FactorModel("load_type", ['compose_post'])
+            factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
         # TODO: Data columns for measurement results of run_table.csv
         energybridge_data_columns = EnergibridgeOutputParser.data_columns()
         scaphandre_data_columns = ScaphandreOutputParser.data_columns()
