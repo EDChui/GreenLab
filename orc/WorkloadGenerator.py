@@ -24,10 +24,10 @@ class LoadType(Enum):
 
 class LoadLevel(Enum):
     # users, spawn_rate, duration(s)
-    LOW    = (50,  50,  30)
-    MEDIUM = (200, 200, 30)
-    HIGH   = (600, 600, 30)
-    DEBUG  = (5,   5,   10)  # For debugging only
+    LOW    = (10,  5,  60)
+    MEDIUM = (30,  10, 90)
+    HIGH   = (60,  20, 120)
+    DEBUG  = (3,   3,  10)  # For debugging only
     @property
     def users(self): return self.value[0]
     @property
@@ -68,6 +68,8 @@ class BaseDSBUser(HttpUser):
             name="POST /user/login",
             allow_redirects=True,
         )
+        r_login.raise_for_status()
+        assert r_login.status_code == 200, f"Login failed: {r_login.text}"
 
 
 class HomeTimelineUser(BaseDSBUser):
@@ -89,7 +91,12 @@ class ComposePostUser(BaseDSBUser):
 
         form_resp = self.client.post(
             "/api/post/compose",
-            data={"post_type": "0", "text": text},
+            data={
+                "post_type": "0",
+                "text": text,
+                "media_ids": "[]",
+                "media_types": "[]"
+            },
             name="POST /compose_post (form)",
             allow_redirects=False,
         )
