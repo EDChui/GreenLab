@@ -43,9 +43,13 @@ class EnergibridgeOutputParser:
         'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)', 'PP0_ENERGY (J)'
     ]
 
+    energy_trapz_columns = [
+        "PACKAGE_POWER_energy_joules", "DRAM_POWER_energy_joules", "PP0_POWER_energy_joules",
+    ]
+
     @classmethod
     def data_columns(cls) -> list:
-        return cls.target_columns + cls.delta_target_columns
+        return cls.target_columns + cls.delta_target_columns + cls.energy_trapz_columns
 
     @classmethod
     def parse_output(cls, file_path) -> dict:
@@ -58,9 +62,9 @@ class EnergibridgeOutputParser:
 
         # Calculate column-wise averages, ignoring NaN values and deltas from start of experiment to finish
         averages = df[cls.target_columns].mean().to_dict()
-        deltas = {}
-
+        
         # Account and mitigate potential RAPL overflow during metric collection
+        deltas = {}
         for column in cls.delta_target_columns:
             overflow_counter = 0
             # Iterate and adjust values in the array
@@ -73,7 +77,18 @@ class EnergibridgeOutputParser:
                     column_data[i:] += overflow_counter * RAPL_OVERFLOW_VALUE
             deltas[column] = column_data[-1] - column_data[0]
 
-        return dict(averages.items() | deltas.items())
+        # Compute total energy from power time series
+        power_cols = [c for c in df.columns if "(W)" in c]
+        energy_trapz = {}
+        if power_cols and "TIMESTAMP" in df.columns:
+            times = pd.to_datetime(df["TIMESTAMP"]).astype(np.int64) / 1e9  # convert ns → seconds
+            for col in power_cols:
+                P = df[col].to_numpy(float)
+                # Integrate power over time (Joules)
+                E = float(np.trapz(P, times))
+                energy_trapz[col.replace("(W)", "_energy_joules")] = round(E, 2)
+
+        return dict(averages.items() | deltas.items() | energy_trapz.items())
 
 class ScaphandreOutputParser:
     @classmethod
@@ -321,7 +336,7 @@ class RunnerConfig:
         self.scaphandre_json_filename = "scaphandre_energy.json"
         self.docker_stats_csv_filename = "docker_stats.csv"
 
-        self.energibridge_metric_capturing_interval : int = 2000                        # milliseconds
+        self.energibridge_metric_capturing_interval : int = 1000                        # milliseconds
         self.warmup_time                            : int = 90 if not DEBUG_MODE else 5 # seconds
         self.post_warmup_cooldown_time              : int = 30 if not DEBUG_MODE else 1 # seconds
 
