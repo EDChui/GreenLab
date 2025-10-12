@@ -28,7 +28,7 @@ class LoadLevel(Enum):
     LOW    = (20,  2,  120)
     MEDIUM = (200, 20, 120)
     HIGH   = (500, 50, 120)
-    DEBUG  = (3,   3,  10)  # For debugging only
+    DEBUG  = (3,   3,  30)  # For debugging only
     @property
     def users(self): return self.value[0]
     @property

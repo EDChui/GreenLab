@@ -41,6 +41,15 @@ signal.signal(signal.SIGINT, handle_sigint)
 signal.signal(signal.SIGTERM, handle_sigint)
 
 
+def snake_to_pascal(name: str) -> str:
+    """Convert snake_case to PascalCase (e.g. compose_post_service → ComposePostService)."""
+    return "".join(word.capitalize() for word in name.split("_"))
+
+# Mapping between PascalCase executable name and JSON key name
+SERVICE_MAP = {snake_to_pascal(service): service for service in TARGET_SERVICES}
+# Example:
+# {'MediaService': 'media_service', 'HomeTimelineService': 'home_timeline_service', 'ComposePostService': 'compose_post_service'}
+
 def extract_power_metrics(metrics_text: str) -> dict:
     """
     Extract power (microwatts) for target services.
@@ -54,14 +63,16 @@ def extract_power_metrics(metrics_text: str) -> dict:
     for match in power_pattern.finditer(metrics_text):
         cmd = match.group("cmd")
         val = float(match.group("value"))
-        for svc in TARGET_SERVICES:
-            if svc in cmd:
-                key = f"{svc}_power_uW"
+
+        # Match PascalCase service names from Scaphandre output
+        for exe_name, json_key in SERVICE_MAP.items():
+            if exe_name in cmd:
+                key = f"{json_key}_power_uW"
                 power_data[key] = power_data.get(key, 0.0) + val
 
     # Ensure all services appear, even if missing
-    for svc in TARGET_SERVICES:
-        power_data.setdefault(f"{svc}_power_uW", 0.0)
+    for service in TARGET_SERVICES:
+        power_data.setdefault(f"{service}_power_uW", 0.0)
 
     return power_data
 

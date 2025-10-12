@@ -122,7 +122,7 @@ class ScaphandreOutputParser:
                     entry = json.loads(line)
                     t = cls._iso_to_epoch(entry["timestamp"])
                     row = {"t": t}
-                    for service in cls.TARGET_SERVICES:
+                    for service in TARGET_SERVICES:
                         key = f"{service}_power_uW"
                         if key in entry:
                             row[service] = entry[key] / 1e6  # convert µW → W
