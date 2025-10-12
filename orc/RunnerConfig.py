@@ -44,13 +44,9 @@ class EnergibridgeOutputParser:
         'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)', 'PP0_ENERGY (J)'
     ]
 
-    energy_trapz_columns = [
-        "PACKAGE_POWER_energy_joules", "DRAM_POWER_energy_joules", "PP0_POWER_energy_joules",
-    ]
-
     @classmethod
     def data_columns(cls) -> list:
-        return cls.target_columns + cls.delta_target_columns + cls.energy_trapz_columns
+        return cls.target_columns + cls.delta_target_columns
 
     @classmethod
     def parse_output(cls, file_path) -> dict:
@@ -78,18 +74,7 @@ class EnergibridgeOutputParser:
                     column_data[i:] += overflow_counter * RAPL_OVERFLOW_VALUE
             deltas[column] = column_data[-1] - column_data[0]
 
-        # Compute total energy from power time series
-        power_cols = [c for c in df.columns if "(W)" in c]
-        energy_trapz = {}
-        if power_cols and "TIMESTAMP" in df.columns:
-            times = pd.to_datetime(df["TIMESTAMP"]).astype(np.int64) / 1e9  # convert ns → seconds
-            for col in power_cols:
-                P = df[col].to_numpy(float)
-                # Integrate power over time (Joules)
-                E = float(np.trapz(P, times))
-                energy_trapz[col.replace("(W)", "_energy_joules")] = round(E, 2)
-
-        return dict(averages.items() | deltas.items() | energy_trapz.items())
+        return dict(averages.items() | deltas.items())
 
 class ScaphandreOutputParser:
     @classmethod
