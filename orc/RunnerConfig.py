@@ -355,7 +355,7 @@ class RunnerConfig:
             # factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
             # factor3 = FactorModel("load_level", ['debug'])
             factor2 = FactorModel("load_type", ['compose_post'])
-            factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
+            factor3 = FactorModel("load_level", ['debug'])
         # TODO: Data columns for measurement results of run_table.csv
         energybridge_data_columns = EnergibridgeOutputParser.data_columns()
         scaphandre_data_columns = ScaphandreOutputParser.data_columns()
@@ -413,14 +413,14 @@ class RunnerConfig:
         sleep_duration_seconds = 300 # Long enough for the whole workload generation to finish
         self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
         # TODO: Container-level energy measurement tools with scaphandre, interval: 2s
-        # self.scaphandre_start = (
-        #     f"bash -lc 'DIR={self.external_run_dir}; FILE={self.scaphandre_json_filename}; "
-        #     f"mkdir -p \"$DIR\"; sudo scaphandre json -t 2 -n 0 -f \"$DIR/$FILE\" & echo $! > \"$DIR/scaphandre.pid\"'"
-        # )
-        # self.scaphandre_stop = (
-        #     f"bash -lc 'DIR={self.external_run_dir}; "
-        #     f"[ -f \"$DIR/scaphandre.pid\" ] && sudo kill -SIGINT $(cat \"$DIR/scaphandre.pid\") && rm -f \"$DIR/scaphandre.pid\" || true'"
-        # )
+        self.scaphandre_start = (
+            f"bash -lc 'DIR={self.external_run_dir}; FILE={self.scaphandre_json_filename}; "
+            f"mkdir -p \"$DIR\"; sudo scaphandre json -t 2 -n 0 -f \"$DIR/$FILE\" & echo $! > \"$DIR/scaphandre.pid\"'"
+        )
+        self.scaphandre_stop = (
+            f"bash -lc 'DIR={self.external_run_dir}; "
+            f"[ -f \"$DIR/scaphandre.pid\" ] && sudo kill -SIGINT $(cat \"$DIR/scaphandre.pid\") && rm -f \"$DIR/scaphandre.pid\" || true'"
+        )
 
         # Commands for collecting container-level CPU and memory usage on host machine: samples per second
         self.docker_stats_start = (
@@ -447,8 +447,8 @@ class RunnerConfig:
         ssh_energibridge.execute_remote_command(f"{self.energibridge_command} & pid=$!; echo $pid")
         energibridge_pid = ssh_energibridge.stdout.readline().strip()
         output.console_log_OK(f"EnergiBridge started with PID {energibridge_pid}")
-        # ssh_scaphandre.execute_remote_command(self.scaphandre_start)
-        # output.console_log_OK("Scaphandre started for container-level energy measurement.")
+        ssh_scaphandre.execute_remote_command(self.scaphandre_start)
+        output.console_log_OK("Scaphandre started for container-level energy measurement.")
         ssh_docker_stats.execute_remote_command(self.docker_stats_start)
         output.console_log_OK("Docker stats collection started.")
 
@@ -466,8 +466,8 @@ class RunnerConfig:
         output.console_log_OK("EnergiBridge stopped.")
 
         # Stop Scaphandre
-        # ssh_scaphandre.execute_remote_command(self.scaphandre_stop)
-        # output.console_log_OK("Scaphandre stopped.")
+        ssh_scaphandre.execute_remote_command(self.scaphandre_stop)
+        output.console_log_OK("Scaphandre stopped.")
 
         # Stop docker stats collection
         ssh_docker_stats.execute_remote_command(self.docker_stats_stop)
@@ -498,26 +498,26 @@ class RunnerConfig:
         # Copy output files from remote to local
         remote_energibridge_csv = f"{self.external_run_dir}/{self.energibridge_csv_filename}"
         remote_docker_stats_csv = f"{self.external_run_dir}/{self.docker_stats_csv_filename}"
-        # remote_scaphandre_json = f"{self.external_run_dir}/{self.scaphandre_json_filename}"
+        remote_scaphandre_json = f"{self.external_run_dir}/{self.scaphandre_json_filename}"
         local_energibridge_csv = context.run_dir / self.energibridge_csv_filename
         local_docker_stats_csv = context.run_dir / self.docker_stats_csv_filename
-        # local_scaphandre_json = context.run_dir / self.scaphandre_json_filename
+        local_scaphandre_json = context.run_dir / self.scaphandre_json_filename
         
         ssh.copy_file_from_remote(remote_energibridge_csv, str(local_energibridge_csv))
         ssh.copy_file_from_remote(remote_docker_stats_csv, str(local_docker_stats_csv))
-        # ssh.copy_file_from_remote(remote_scaphandre_json, str(local_scaphandre_json))
+        ssh.copy_file_from_remote(remote_scaphandre_json, str(local_scaphandre_json))
         
         # Parse the output to populate run data
         energibridge_data = EnergibridgeOutputParser.parse_output(local_energibridge_csv)
         docker_stats_data = DockerStatsOutputParser.parse_output(local_docker_stats_csv)
-        # scaphandre_data = ScaphandreOutputParser.parse_output(local_scaphandre_json)
+        scaphandre_data = ScaphandreOutputParser.parse_output(local_scaphandre_json)
         locust_stats_data = LocustStatsOutputParser.parse_output(self.workload_result)
 
         return {
             "run_time": self.run_time, 
             **energibridge_data, 
             **docker_stats_data, 
-            # **scaphandre_data,
+            **scaphandre_data,
             **locust_stats_data
         }
 
