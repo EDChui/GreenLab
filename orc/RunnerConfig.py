@@ -77,12 +77,18 @@ class EnergibridgeOutputParser:
 
 class ScaphandreOutputParser:
     @classmethod
-    def data_columns(cls) -> []:
+    def data_columns(cls) -> list:
         return [f"{service}_energy_joules" for service in TARGET_SERVICES]
+
+    @staticmethod
+    def _iso_to_epoch(ts: str) -> float:
+        # "2025-10-06T13:15:24Z" -> seconds since epoch
+        from datetime import datetime, timezone
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
 
     @classmethod
     def parse_output(cls, file_path: str) -> dict:
-        records = []
+        rows = []
 
         with open(file_path, "r") as f:
             try:
@@ -95,27 +101,55 @@ class ScaphandreOutputParser:
 
         # Flattening
         for entry in data:
-            timestamp = entry.get("timestamp")
-            sensors = entry.get("sensors", [])
-            for sensor in sensors:
+            t = cls._iso_to_epoch(entry.get("timestamp"))
+            for sensor in entry.get("sensors", []):
                 for c in sensor.get("containers", []):
-                    records.append({
-                        "timestamp": timestamp,
-                        "sensor": sensor.get("sensor_name"),
-                        "container_name": c.get("container_name"),
-                        "energy_joules": c.get("energy_joules", 0.0)
+                    rows.append({
+                        "t": t,
+                        "container": c.get("container_name"),
+                        "power_w": c.get("power_watts", 0.0),
+                        "energy_j": c.get("energy_joules", 0.0),
                     })
 
-        df = pd.DataFrame(records)
-        summary = df.groupby("container_name")["energy_joules"] \
-            .sum() \
-            .reset_index() \
-            .sort_values("energy_joules", ascending=False)
-        results = {}
-        for _, row in summary.iterrows():
-            name_key = row["container_name"].replace("-", "_") + "_energy_joules"
-            summary[name_key] = round(float(row["energy_joules"]), 2)
-        return results
+        if not rows:
+            return {f"{s}_energy_joules": None for s in cls.target_services}
+
+        df = pd.DataFrame(rows).dropna(subset=["name"])
+        df["name_norm"] = df["name"].str.replace("-", "_")
+
+        result = {}
+        for service in cls.target_services:
+            # match e.g. "media_service" to "media-service"
+            m = df[df["name_norm"] == service]
+            if m.empty:
+                result[f"{service}_energy_joules"] = None
+                continue
+
+            t = m["t"].to_numpy(dtype=float)
+
+            if m["p"].notna().any():
+                # integrate power directly (J = ∫ P dt)
+                p = m["p"].fillna(method="ffill").fillna(0.0).to_numpy(dtype=float)
+                E = float(np.trapz(p, t))
+            else:
+                # derive power from energy series if available:
+                # if energy is per-interval, trapz over (e, t) == sum(e) when dt=1
+                e = m["e"].fillna(method="ffill").fillna(0.0).to_numpy(dtype=float)
+                # assume e is interval energy; approximate power = e/dt on intervals; integrate back to be robust
+                if len(e) >= 2:
+                    dt = np.diff(t)
+                    p = np.diff(e) / dt  # if e is cumulative; if e is interval, this becomes noisy but small
+                    # If p contains NaNs (constant e), fall back to sum of interval energies:
+                    if np.isnan(p).any() or np.allclose(p, 0):
+                        E = float(np.sum(e))
+                    else:
+                        E = float(np.trapz(p, t[1:]))
+                else:
+                    E = float(np.sum(e))
+
+            result[f"{service}_energy_joules"] = round(E, 2)
+
+        return result
 
 class DockerStatsOutputParser:
     @staticmethod
@@ -287,7 +321,7 @@ class RunnerConfig:
         self.scaphandre_json_filename = "scaphandre_energy.json"
         self.docker_stats_csv_filename = "docker_stats.csv"
 
-        self.energibridge_metric_capturing_interval : int = 200                         # milliseconds
+        self.energibridge_metric_capturing_interval : int = 2000                        # milliseconds
         self.warmup_time                            : int = 90 if not DEBUG_MODE else 5 # seconds
         self.post_warmup_cooldown_time              : int = 30 if not DEBUG_MODE else 1 # seconds
 
@@ -414,6 +448,10 @@ class RunnerConfig:
         ssh_energibridge.execute_remote_command(f"kill {energibridge_pid}")
         output.console_log_OK("EnergiBridge stopped.")
 
+        # Stop Scaphandre
+        ssh_scaphandre.execute_remote_command(self.scaphandre_stop)
+        output.console_log_OK("Scaphandre stopped.")
+
         # Stop docker stats collection
         ssh_docker_stats.execute_remote_command(self.docker_stats_stop)
         output.console_log_OK("Docker stats collection stopped.")
@@ -443,18 +481,22 @@ class RunnerConfig:
         # Copy output files from remote to local
         remote_energibridge_csv = f"{self.external_run_dir}/{self.energibridge_csv_filename}"
         remote_docker_stats_csv = f"{self.external_run_dir}/{self.docker_stats_csv_filename}"
+        remote_scaphandre_json = f"{self.external_run_dir}/{self.scaphandre_json_filename}"
         local_energibridge_csv = context.run_dir / self.energibridge_csv_filename
         local_docker_stats_csv = context.run_dir / self.docker_stats_csv_filename
+        local_scaphandre_json = context.run_dir / self.scaphandre_json_filename
         
         ssh.copy_file_from_remote(remote_energibridge_csv, str(local_energibridge_csv))
         ssh.copy_file_from_remote(remote_docker_stats_csv, str(local_docker_stats_csv))
+        ssh.copy_file_from_remote(remote_scaphandre_json, str(local_scaphandre_json))
         
         # Parse the output to populate run data
         energibridge_data = EnergibridgeOutputParser.parse_output(local_energibridge_csv)
         docker_stats_data = DockerStatsOutputParser.parse_output(local_docker_stats_csv)
+        scaphandre_data = ScaphandreOutputParser.parse_output(local_scaphandre_json)
         locust_stats_data = LocustStatsOutputParser.parse_output(self.workload_result)
 
-        return {"run_time": self.run_time, **energibridge_data, **docker_stats_data, **locust_stats_data}
+        return {"run_time": self.run_time, **energibridge_data, **docker_stats_data, **scaphandre_data, **locust_stats_data}
 
     def after_experiment(self) -> None:
         """Perform any activity required after stopping the experiment here
