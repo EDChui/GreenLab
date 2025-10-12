@@ -122,14 +122,21 @@ class MediaUser(BaseDSBUser):
 
         # 2) Compose on the main app
         text = _random_post_text()
-        body = (
-            f"post_type=0"
-            f"&text={quote_plus(text)}"
-            f"&media_ids=[\"{media_id}\"]"
-            f"&media_types=[\"{media_type}\"]"
-        )
-        headers = {"Content-Type": "text/plain;charset=UTF-8"}
-        self.client.post("/api/post/compose", data=body, headers=headers, name="POST /compose_with_media")
+        # body = (
+        #     f"post_type=0"
+        #     f"&text={quote_plus(text)}"
+        #     f"&media_ids=[\"{media_id}\"]"
+        #     f"&media_types=[\"{media_type}\"]"
+        # )
+        # headers = {"Content-Type": "text/plain;charset=UTF-8"}
+        # self.client.post("/api/post/compose", data=body, headers=headers, name="POST /compose_with_media")
+        body={
+            "post_type": "0",
+            "text": text,
+            "media_ids": f'["{media_id}"]',
+            "media_types": f'["{media_type}"]'
+        }
+        self.client.post("/api/post/compose", data=body, name="POST /compose_with_media")
 
 
 def _random_post_text():
