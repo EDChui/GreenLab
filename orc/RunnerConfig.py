@@ -41,7 +41,7 @@ class EnergibridgeOutputParser:
     target_columns = ['TOTAL_MEMORY', 'TOTAL_SWAP', 'USED_MEMORY', 'USED_SWAP'] + [f'CPU_USAGE_{i}' for i in range(CPU_COUNT)] + [f'CPU_FREQUENCY_{i}' for i in range(CPU_COUNT)]
 
     delta_target_columns = [
-        'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)', 'PP0_ENERGY (J)'
+        'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)'
     ]
 
     @classmethod
