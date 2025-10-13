@@ -333,7 +333,7 @@ class RunnerConfig:
         run_table_data_columns = ["run_time"] + energybridge_data_columns + scaphandre_data_columns + docker_stats_data_columns + client_metric_data_columns
         self.run_table_model = RunTableModel(
             factors=[factor1, factor2, factor3],
-            repetitions=5 if not DEBUG_MODE else 1,
+            repetitions=15 if not DEBUG_MODE else 1,
             shuffle=True if not DEBUG_MODE else False,
             data_columns=run_table_data_columns
         )
