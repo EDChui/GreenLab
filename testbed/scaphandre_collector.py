@@ -41,14 +41,9 @@ signal.signal(signal.SIGINT, handle_sigint)
 signal.signal(signal.SIGTERM, handle_sigint)
 
 
-def snake_to_pascal(name: str) -> str:
-    """Convert snake_case to PascalCase (e.g. compose_post_service → ComposePostService)."""
-    return "".join(word.capitalize() for word in name.split("_"))
-
-# Mapping between PascalCase executable name and JSON key name
-SERVICE_MAP = {snake_to_pascal(service): service for service in TARGET_SERVICES}
-# Example:
-# {'MediaService': 'media_service', 'HomeTimelineService': 'home_timeline_service', 'ComposePostService': 'compose_post_service'}
+def _to_camel_case(snake_name: str) -> str:
+    """Convert 'media_service' -> 'MediaService'"""
+    return "".join(part.capitalize() for part in snake_name.split("_"))
 
 def extract_power_metrics(metrics_text: str) -> dict:
     """
@@ -64,10 +59,11 @@ def extract_power_metrics(metrics_text: str) -> dict:
         cmd = match.group("cmd")
         val = float(match.group("value"))
 
-        # Match PascalCase service names from Scaphandre output
-        for exe_name, json_key in SERVICE_MAP.items():
-            if exe_name in cmd:
-                key = f"{json_key}_power_uW"
+        # Match either snake_case or CamelCase form
+        for service in TARGET_SERVICES:
+            service_camel = _to_camel_case(service)
+            if service in cmd or service_camel in cmd:
+                key = f"{service}_power_uW"
                 power_data[key] = power_data.get(key, 0.0) + val
 
     # Ensure all services appear, even if missing
@@ -92,6 +88,11 @@ def fetch_metrics() -> str:
 
 def main():
     print(f"[ScaphandreCollector] Starting. Writing to {OUTPUT_FILE}")
+
+    # Clear file at start of every run
+    with open(OUTPUT_FILE, "w", encoding="utf-8"):
+        pass
+
     with open(OUTPUT_FILE, "a", encoding="utf-8") as f:
         while RUNNING:
             metrics_text = fetch_metrics()
