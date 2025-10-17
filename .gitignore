@@ -217,3 +217,5 @@ __marimo__/
 
 # Experiment Runner
 orc/experiments/
+
+.DS_Store

@@ -17,6 +17,8 @@ import pandas as pd
 import math
 import re
 import numpy as np
+import json
+from datetime import datetime
 
 # Add the current directory to Python path to allow local imports
 import sys
@@ -33,12 +35,13 @@ load_dotenv()
 DEBUG_MODE = getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")
 CPU_COUNT = 32
 RAPL_OVERFLOW_VALUE = 262143.328850 # Found via `cat /sys/class/powercap/intel-rapl:0/max_energy_range_uj` in uJ
+TARGET_SERVICES = ["media_service", "home_timeline_service", "compose_post_service"]
 
 class EnergibridgeOutputParser:
     target_columns = ['TOTAL_MEMORY', 'TOTAL_SWAP', 'USED_MEMORY', 'USED_SWAP'] + [f'CPU_USAGE_{i}' for i in range(CPU_COUNT)] + [f'CPU_FREQUENCY_{i}' for i in range(CPU_COUNT)]
 
     delta_target_columns = [
-        'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)', 'PP0_ENERGY (J)'
+        'DRAM_ENERGY (J)', 'PACKAGE_ENERGY (J)'
     ]
 
     @classmethod
@@ -56,9 +59,9 @@ class EnergibridgeOutputParser:
 
         # Calculate column-wise averages, ignoring NaN values and deltas from start of experiment to finish
         averages = df[cls.target_columns].mean().to_dict()
-        deltas = {}
-
+        
         # Account and mitigate potential RAPL overflow during metric collection
+        deltas = {}
         for column in cls.delta_target_columns:
             overflow_counter = 0
             # Iterate and adjust values in the array
@@ -73,9 +76,66 @@ class EnergibridgeOutputParser:
 
         return dict(averages.items() | deltas.items())
 
-class DockerStatsOutputParser:
-    target_services = ["media_service", "home_timeline_service", "compose_post_service"]
+class ScaphandreOutputParser:
+    @classmethod
+    def data_columns(cls) -> list:
+        return [f"{service}_energy_joules" for service in TARGET_SERVICES]
 
+    @staticmethod
+    def _iso_to_epoch(ts: str) -> float:
+        # "2025-10-06T13:15:24Z" -> seconds since epoch
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+
+    @classmethod
+    def parse_output(cls, file_path: str) -> dict:
+        """
+        Parse .jsonl file containing per-service power readings in microwatts.
+        Compute energy (J) for each service using trapezoid rule.
+        Returns dict:
+        {
+            "media_service_energy_joules": ...,
+            "home_timeline_service_energy_joules": ...,
+            "compose_post_service_energy_joules": ...
+        }
+        """
+        rows = []
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    t = cls._iso_to_epoch(entry["timestamp"])
+                    row = {"t": t}
+                    for service in TARGET_SERVICES:
+                        key = f"{service}_power_uW"
+                        if key in entry:
+                            row[service] = entry[key] / 1e6  # convert µW → W
+                        else:
+                            row[service] = 0.0
+                    rows.append(row)
+                except Exception as e:
+                    print(f"[ScaphandreOutputParser] Skipped invalid line: {e}")
+
+        if not rows:
+            return {f"{service}_energy_joules": None for service in TARGET_SERVICES}
+
+        df = pd.DataFrame(rows).sort_values("t").reset_index(drop=True)
+
+        result = {}
+        for service in TARGET_SERVICES:
+            t = df["t"].to_numpy(dtype=float)
+            p = df[service].to_numpy(dtype=float)
+            if len(t) > 1:
+                # integrate power (Watts) over time (seconds) → Joules
+                E = float(np.trapz(p, t))
+                result[f"{service}_energy_joules"] = round(E, 2)
+            else:
+                result[f"{service}_energy_joules"] = 0.0
+
+        return result
+
+class DockerStatsOutputParser:
     @staticmethod
     def _mem_to_bytes(mem_usage_str: str) -> float:
         """
@@ -136,7 +196,7 @@ class DockerStatsOutputParser:
             "cpu_usage_mean", "cpu_usage_p95", "cpu_usage_max", "cpu_usage_samples",
             "mem_usage_mean", "mem_usage_p95", "mem_usage_max", "mem_usage_samples"
         ]
-        return [f"{service}_{metric}" for service in cls.target_services for metric in base_metrics]
+        return [f"{service}_{metric}" for service in TARGET_SERVICES for metric in base_metrics]
 
     @classmethod
     def parse_output(cls, file_path: str) -> dict:
@@ -159,7 +219,7 @@ class DockerStatsOutputParser:
         # Remove suffix like -1, -2, ...
         df['Service'] = df['Container'].str.replace(r'-\d+$', '', regex=True)
 
-        include = [f"socialnetwork-{service.replace('_', '-')}" for service in cls.target_services]
+        include = [f"socialnetwork-{service.replace('_', '-')}" for service in TARGET_SERVICES]
         df = df[df['Service'].isin(include)]
 
         if df.empty:
@@ -182,7 +242,7 @@ class DockerStatsOutputParser:
             for service, val in service_map.items():
                 short_service = service.replace("socialnetwork-", "").replace("-", "_")
                 result[f"{short_service}_{metric}"] = (
-                    None if (isinstance(val, float) and math.isnan(val)) else val
+                    None if (isinstance(val, float) and math.isnan(val)) else val / CPU_COUNT
                 )
 
         return result
@@ -242,10 +302,11 @@ class RunnerConfig:
         self.testbed_project_directory = "~/GreenLab/testbed"
         self.external_run_dir = f'{self.testbed_project_directory}/experiments'
         self.energibridge_csv_filename = "energibridge.csv"
+        self.scaphandre_json_filename = "scaphandre_energy.jsonl"
         self.docker_stats_csv_filename = "docker_stats.csv"
 
-        self.energibridge_metric_capturing_interval : int = 200                         # milliseconds
-        self.warmup_time                            : int = 90 if not DEBUG_MODE else 5 # seconds
+        self.energibridge_metric_capturing_interval : int = 1000                        # milliseconds
+        self.warmup_time                            : int = 60 if not DEBUG_MODE else 5 # seconds
         self.post_warmup_cooldown_time              : int = 30 if not DEBUG_MODE else 1 # seconds
 
         output.console_log("Custom config loaded")
@@ -261,15 +322,16 @@ class RunnerConfig:
         else:
             factor1 = FactorModel("cpu_governor", ['performance'])
             factor2 = FactorModel("load_type", ['media', 'home_timeline', 'compose_post'])
-            factor3 = FactorModel("load_level", ['debug'])
-        # TODO: Data columns for measurement results of run_table.csv
+            factor3 = FactorModel("load_level", ['low', 'medium', 'high'])
+        # Data columns for measurement results of run_table.csv
         energybridge_data_columns = EnergibridgeOutputParser.data_columns()
+        scaphandre_data_columns = ScaphandreOutputParser.data_columns()
         docker_stats_data_columns = DockerStatsOutputParser.data_columns()
         client_metric_data_columns = LocustStatsOutputParser.data_columns()  
-        run_table_data_columns = ["run_time"] + energybridge_data_columns + docker_stats_data_columns + client_metric_data_columns
+        run_table_data_columns = ["run_time"] + energybridge_data_columns + scaphandre_data_columns + docker_stats_data_columns + client_metric_data_columns
         self.run_table_model = RunTableModel(
             factors=[factor1, factor2, factor3],
-            repetitions=5 if not DEBUG_MODE else 1,
+            repetitions=15 if not DEBUG_MODE else 1,
             shuffle=True if not DEBUG_MODE else False,
             data_columns=run_table_data_columns
         )
@@ -317,7 +379,18 @@ class RunnerConfig:
         # Server-level energy measurement with EnergiBridge
         sleep_duration_seconds = 300 # Long enough for the whole workload generation to finish
         self.energibridge_command = f"energibridge --interval {self.energibridge_metric_capturing_interval} --summary --output {self.external_run_dir}/{self.energibridge_csv_filename} --command-output {self.external_run_dir}/output.txt sleep {sleep_duration_seconds}"
-        # TODO: Container-level energy measurement tools with scaphandre
+        # TODO: Container-level energy measurement tools with scaphandre, interval: 2s
+        self.scaphandre_start = (
+            f"bash -lc 'DIR={self.testbed_project_directory}; "
+            f"nohup python3 $DIR/scaphandre_collector.py > $DIR/scaphandre_collector.out 2>&1 & "
+            f"echo $! > $DIR/scaphandre_collector.pid'"
+        )
+        self.scaphandre_stop = (
+            f"bash -lc 'DIR={self.testbed_project_directory}; "
+            f"[ -f $DIR/scaphandre_collector.pid ] && "
+            f"kill -TERM $(cat $DIR/scaphandre_collector.pid) && "
+            f"rm -f $DIR/scaphandre_collector.pid || true'"
+        )
 
         # Commands for collecting container-level CPU and memory usage on host machine: samples per second
         self.docker_stats_start = (
@@ -333,7 +406,9 @@ class RunnerConfig:
 
     def start_measurement(self, context: RunnerContext) -> None:
         """Perform any activity required for starting measurements."""
-        ssh_energibridge = ExternalMachineAPI() # Separate SSH client for energibridge to avoid blocking
+        # Separate SSH client for energibridge to avoid blocking
+        ssh_energibridge = ExternalMachineAPI()
+        ssh_scaphandre = ExternalMachineAPI()
         ssh_docker_stats = ExternalMachineAPI()
         workloadGenerator = WorkloadGenerator()
         self.run_time = time.time()
@@ -342,8 +417,10 @@ class RunnerConfig:
         ssh_energibridge.execute_remote_command(f"{self.energibridge_command} & pid=$!; echo $pid")
         energibridge_pid = ssh_energibridge.stdout.readline().strip()
         output.console_log_OK(f"EnergiBridge started with PID {energibridge_pid}")
+        ssh_scaphandre.execute_remote_command(self.scaphandre_start)
+        output.console_log_OK("Scaphandre collector started for container-level energy measurement.")
         ssh_docker_stats.execute_remote_command(self.docker_stats_start)
-        output.console_log_OK("Docker stats collected.")
+        output.console_log_OK("Docker stats collection started.")
 
         # Fire workload with Locust
         load_type = LoadType[context.execute_run['load_type'].upper()]
@@ -357,6 +434,10 @@ class RunnerConfig:
         # Kill energibridge after workload is done
         ssh_energibridge.execute_remote_command(f"kill {energibridge_pid}")
         output.console_log_OK("EnergiBridge stopped.")
+
+        # Stop Scaphandre
+        ssh_scaphandre.execute_remote_command(self.scaphandre_stop)
+        output.console_log_OK("Scaphandre collector stopped.")
 
         # Stop docker stats collection
         ssh_docker_stats.execute_remote_command(self.docker_stats_stop)
@@ -387,18 +468,28 @@ class RunnerConfig:
         # Copy output files from remote to local
         remote_energibridge_csv = f"{self.external_run_dir}/{self.energibridge_csv_filename}"
         remote_docker_stats_csv = f"{self.external_run_dir}/{self.docker_stats_csv_filename}"
+        remote_scaphandre_json = f"{self.external_run_dir}/{self.scaphandre_json_filename}"
         local_energibridge_csv = context.run_dir / self.energibridge_csv_filename
         local_docker_stats_csv = context.run_dir / self.docker_stats_csv_filename
+        local_scaphandre_json = context.run_dir / self.scaphandre_json_filename
         
         ssh.copy_file_from_remote(remote_energibridge_csv, str(local_energibridge_csv))
         ssh.copy_file_from_remote(remote_docker_stats_csv, str(local_docker_stats_csv))
+        ssh.copy_file_from_remote(remote_scaphandre_json, str(local_scaphandre_json))
         
         # Parse the output to populate run data
         energibridge_data = EnergibridgeOutputParser.parse_output(local_energibridge_csv)
         docker_stats_data = DockerStatsOutputParser.parse_output(local_docker_stats_csv)
+        scaphandre_data = ScaphandreOutputParser.parse_output(local_scaphandre_json)
         locust_stats_data = LocustStatsOutputParser.parse_output(self.workload_result)
 
-        return {"run_time": self.run_time, **energibridge_data, **docker_stats_data, **locust_stats_data}
+        return {
+            "run_time": self.run_time, 
+            **energibridge_data, 
+            **docker_stats_data, 
+            **scaphandre_data,
+            **locust_stats_data
+        }
 
     def after_experiment(self) -> None:
         """Perform any activity required after stopping the experiment here

@@ -24,10 +24,11 @@ class LoadType(Enum):
 
 class LoadLevel(Enum):
     # users, spawn_rate, duration(s)
-    LOW    = (50,  50,  30)
-    MEDIUM = (200, 200, 30)
-    HIGH   = (600, 600, 30)
-    DEBUG  = (5,   5,   10)  # For debugging only
+    # ramp time: 10s
+    LOW    = (20,  2,  120)
+    MEDIUM = (200, 20, 120)
+    HIGH   = (500, 50, 120)
+    DEBUG  = (3,   3,  30)  # For debugging only
     @property
     def users(self): return self.value[0]
     @property
@@ -58,15 +59,13 @@ class BaseDSBUser(HttpUser):
             "/api/user/register",
             data=signup_form,
             name="POST /user/register",
-            allow_redirects=True,
         )
 
         login_form = {"username": self.username, "password": self.password, "login": "Login"}
-        r_login = self.client.post(
+        self.client.post(
             "/api/user/login",
             data=login_form,
             name="POST /user/login",
-            allow_redirects=True,
         )
 
 
@@ -87,12 +86,20 @@ class ComposePostUser(BaseDSBUser):
     def compose_post(self):
         text = _random_post_text()
 
-        form_resp = self.client.post(
+        r = self.client.post(
             "/api/post/compose",
-            data={"post_type": "0", "text": text},
+            data={
+                "post_type": "0",
+                "text": text,
+            },
             name="POST /compose_post (form)",
             allow_redirects=False,
+            catch_response=True,
         )
+
+        # Treat 302 as success
+        if r.status_code == 302:
+            r.success()
 
 
 class MediaUser(BaseDSBUser):
@@ -122,14 +129,30 @@ class MediaUser(BaseDSBUser):
 
         # 2) Compose on the main app
         text = _random_post_text()
-        body = (
-            f"post_type=0"
-            f"&text={quote_plus(text)}"
-            f"&media_ids=[\"{media_id}\"]"
-            f"&media_types=[\"{media_type}\"]"
+        # body = (
+        #     f"post_type=0"
+        #     f"&text={quote_plus(text)}"
+        #     f"&media_ids=[\"{media_id}\"]"
+        #     f"&media_types=[\"{media_type}\"]"
+        # )
+        # headers = {"Content-Type": "text/plain;charset=UTF-8"}
+        # self.client.post("/api/post/compose", data=body, headers=headers, name="POST /compose_with_media")
+        body={
+            "post_type": "0",
+            "text": text,
+            "media_ids": f'["{media_id}"]',
+            "media_types": f'["{media_type}"]'
+        }
+        r_c = self.client.post(
+            "/api/post/compose", 
+            data=body, 
+            name="POST /compose_with_media",
+            allow_redirects=False,
+            catch_response=True,
         )
-        headers = {"Content-Type": "text/plain;charset=UTF-8"}
-        self.client.post("/api/post/compose", data=body, headers=headers, name="POST /compose_with_media")
+        # Treat 302 as success
+        if r_c.status_code == 302:
+            r_c.success()
 
 
 def _random_post_text():

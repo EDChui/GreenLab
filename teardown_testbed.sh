@@ -1,4 +1,4 @@
 cd DeathStarBench/socialNetwork
-docker-compose down
+docker compose down
 cd ../..
 rm -rf DeathStarBench
