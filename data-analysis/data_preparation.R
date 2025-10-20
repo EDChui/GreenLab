@@ -121,6 +121,41 @@ processed_data <- processed_data %>%
 # 5. NORMALITY ASSESSMENT
 # =============================================================================
 
+# Function to create Q-Q plots for normality assessment
+create_qq_plots <- function(data, variables) {
+  for (var in unique(variables)) {
+    if (var %in% colnames(data)) {
+      var_data <- data[[var]]
+      var_data <- var_data[!is.na(var_data)]
+      n_obs <- length(var_data)
+      
+      if (n_obs >= 3) {
+        # Create Q-Q plot
+        qq_plot <- ggplot(data.frame(x = var_data), aes(sample = x)) +
+          stat_qq() +
+          stat_qq_line(color = "red", linewidth = 1) +
+          labs(
+            title = paste("Q-Q Plot for", var),
+            subtitle = paste("Sample size:", n_obs),
+            x = "Theoretical Quantiles",
+            y = "Sample Quantiles"
+          ) +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(size = 12, face = "bold"),
+            plot.subtitle = element_text(size = 10)
+          )
+        
+        # Save Q-Q plot
+        plot_filename <- paste0("qq_plot_", gsub("[^A-Za-z0-9]", "_", var), ".png")
+        ggsave(plot_filename, qq_plot, width = 8, height = 6, dpi = 300)
+        
+        cat("Q-Q plot saved:", plot_filename, "\n")
+      }
+    }
+  }
+}
+
 assess_normality <- function(data, variables) {
   normality_results <- data.frame(
     variable = character(),
@@ -216,6 +251,10 @@ normality_vars <- c("total_application_energy", "total_machine_energy",
                     "latency_p95", "latency_p99", "run_time", "cpu_usage_mean", 
                     "cpu_freq_mean", "memory_utilization")
 
+# Generate Q-Q plots before conducting Shapiro-Wilk tests
+create_qq_plots(processed_data, normality_vars)
+
+# Conduct Shapiro-Wilk tests
 normality_assessment <- assess_normality(processed_data, normality_vars)
 
 cat("\nNormality Assessment Results:\n")
