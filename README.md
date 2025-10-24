@@ -6,7 +6,7 @@ The study investigates how the [six Linux CPU governors](https://www.kernel.org/
 
 # Experiment Architecture Overview
 
-![TODO: Architecture Diagram](architecture_diagram.png)
+![Architecture Diagram](docs/architecture_diagram.png)
 
 The experiment uses two machines:
 
